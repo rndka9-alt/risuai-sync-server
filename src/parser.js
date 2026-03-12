@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const zlib = require('zlib');
+const { BLOCK_TYPE } = require('./blockTypes');
 
 const MAGIC_HEADER = Buffer.from('RISUSAVE\0', 'utf-8');
 
@@ -46,7 +47,7 @@ function parseRisuSaveBlocks(buffer) {
       offset += dataLen;
 
       // REMOTE 블록 → Phase 1 fallback
-      if (type === 6) {
+      if (type === BLOCK_TYPE.REMOTE) {
         hasRemote = true;
         continue;
       }
@@ -66,7 +67,7 @@ function parseRisuSaveBlocks(buffer) {
       blocks.set(name, { type, hash, json: jsonStr });
 
       // ROOT 블록에서 __directory 추출
-      if (type === 1) {
+      if (type === BLOCK_TYPE.ROOT) {
         try {
           const rootData = JSON.parse(jsonStr);
           if (rootData.__directory) {

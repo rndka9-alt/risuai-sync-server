@@ -1,7 +1,9 @@
 // ---------------------------------------------------------------------------
-// 라이브 적용 가능한 ROOT 키 화이트리스트
+// 아래 변수들은 client-builder.js 에서 빌드 시 주입됨
+// @see ../client-builder.js — 주입 로직
 // ---------------------------------------------------------------------------
-var SAFE_ROOT_KEYS = ['enabledModules'];
+/** @typedef {typeof import('../blockTypes').BLOCK_TYPE} BLOCK_TYPE */
+/** @typedef {typeof import('../blockTypes').SAFE_ROOT_KEYS} SAFE_ROOT_KEYS */
 
 // ---------------------------------------------------------------------------
 // Catch-up: 놓친 변경분 복구
@@ -105,15 +107,15 @@ function handleBlocksChanged(msg) {
 
   // 기존 캐릭터 수정만 블록 동기화 (type 2=WITH_CHAT, 7=WITHOUT_CHAT)
   var charBlocks = (msg.changed || [])
-    .filter(function (b) { return b.type === 2 || b.type === 7; });
+    .filter(function (b) { return b.type === BLOCK_TYPE.WITH_CHAT || b.type === BLOCK_TYPE.WITHOUT_CHAT; });
 
   // ROOT 블록 중 safe key만 변경된 것 분류
   var safeRootBlocks = [];
 
   (msg.changed || []).forEach(function (b) {
-    if (b.type === 0) return; // CONFIG 무시
-    if (b.type === 2 || b.type === 7) return; // 캐릭터는 위에서 처리
-    if (b.type === 1 && isRootSafeChange(b)) {
+    if (b.type === BLOCK_TYPE.CONFIG) return;
+    if (b.type === BLOCK_TYPE.WITH_CHAT || b.type === BLOCK_TYPE.WITHOUT_CHAT) return; // 캐릭터는 위에서 처리
+    if (b.type === BLOCK_TYPE.ROOT && isRootSafeChange(b)) {
       safeRootBlocks.push(b);
       return;
     }

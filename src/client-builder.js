@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const config = require('./config');
+const { BLOCK_TYPE, SAFE_ROOT_KEYS } = require('./blockTypes');
 
 const CLIENT_DIR = path.join(__dirname, 'client');
 
@@ -27,6 +28,8 @@ function buildClientJs() {
     '// --- Config (서버가 주입) ---',
     'var SYNC_TOKEN = ' + JSON.stringify(config.SYNC_TOKEN) + ';',
     'var DB_PATH = ' + JSON.stringify(config.DB_PATH) + ';',
+    'var BLOCK_TYPE = ' + JSON.stringify(BLOCK_TYPE) + ';',
+    'var SAFE_ROOT_KEYS = ' + JSON.stringify(SAFE_ROOT_KEYS) + ';',
     'var CLIENT_ID = Math.random().toString(36).substring(2) + Date.now().toString(36);',
     '',
     '// --- Shared state ---',

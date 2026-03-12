@@ -1,6 +1,7 @@
 'use strict';
 
 const { parseRisuSaveBlocks } = require('./parser');
+const { BLOCK_TYPE } = require('./blockTypes');
 const cache = require('./cache');
 const config = require('./config');
 
@@ -95,7 +96,7 @@ function processDbWrite(buffer, senderClientId) {
       const entry = { name, type: block.type };
 
       // ROOT 블록: 변경된 top-level 키 목록 포함
-      if (block.type === 1) {
+      if (block.type === BLOCK_TYPE.ROOT) {
         entry.changedKeys = diffRootKeys(
           cache.dataCache.get(name),
           block.json,
