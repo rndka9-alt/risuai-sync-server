@@ -1,4 +1,9 @@
 // ---------------------------------------------------------------------------
+// 라이브 적용 가능한 ROOT 키 화이트리스트
+// ---------------------------------------------------------------------------
+var SAFE_ROOT_KEYS = ['enabledModules'];
+
+// ---------------------------------------------------------------------------
 // Catch-up: 놓친 변경분 복구
 // ---------------------------------------------------------------------------
 function catchUpFromServer() {
@@ -49,6 +54,31 @@ function catchUpFromServer() {
 }
 
 // ---------------------------------------------------------------------------
+// ROOT 블록의 safe key만 변경되었는지 확인
+// ---------------------------------------------------------------------------
+function isRootSafeChange(block) {
+  // changedKeys가 없으면 (서버가 감지 못함) → unsafe
+  if (!block.changedKeys || !Array.isArray(block.changedKeys)) return false;
+  if (block.changedKeys.length === 0) return false;
+  for (var i = 0; i < block.changedKeys.length; i++) {
+    if (SAFE_ROOT_KEYS.indexOf(block.changedKeys[i]) === -1) return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// ROOT safe key 라이브 적용
+// ---------------------------------------------------------------------------
+function applyRootSafeKeys(db, rootData, keys) {
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    if (rootData[key] !== undefined) {
+      db[key] = rootData[key];
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 블록 단위 동기화 핸들러
 // ---------------------------------------------------------------------------
 function handleBlocksChanged(msg) {
@@ -77,31 +107,48 @@ function handleBlocksChanged(msg) {
   var charBlocks = (msg.changed || [])
     .filter(function (b) { return b.type === 2 || b.type === 7; });
 
-  // 캐릭터가 아닌 변경(ROOT, BOTPRESET, MODULES 등) → reload 필요
-  // type 0 (CONFIG) 은 무시 (버전 메타데이터일 뿐)
+  // ROOT 블록 중 safe key만 변경된 것 분류
+  var safeRootBlocks = [];
+
   (msg.changed || []).forEach(function (b) {
-    if (b.type !== 2 && b.type !== 7 && b.type !== 0) {
-      needsReload = true;
+    if (b.type === 0) return; // CONFIG 무시
+    if (b.type === 2 || b.type === 7) return; // 캐릭터는 위에서 처리
+    if (b.type === 1 && isRootSafeChange(b)) {
+      safeRootBlocks.push(b);
+      return;
     }
+    // 그 외 (unsafe ROOT, BOTPRESET, MODULES 등) → reload
+    needsReload = true;
   });
 
-  // 캐릭터 블록들을 병렬 fetch
-  var fetches = charBlocks.map(function (b) {
+  // 캐릭터 블록 + safe ROOT 블록 병렬 fetch
+  var charFetches = charBlocks.map(function (b) {
     return fetch('/sync/block?name=' + encodeURIComponent(b.name))
       .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (data) { return { name: b.name, data: data }; })
-      .catch(function () { return { name: b.name, data: null }; });
+      .then(function (data) { return { type: 'char', name: b.name, data: data }; })
+      .catch(function () { return { type: 'char', name: b.name, data: null }; });
   });
 
-  Promise.all(fetches).then(function (results) {
+  var rootFetches = safeRootBlocks.map(function (b) {
+    return fetch('/sync/block?name=' + encodeURIComponent(b.name))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) { return { type: 'root', block: b, data: data }; })
+      .catch(function () { return { type: 'root', block: b, data: null }; });
+  });
+
+  Promise.all(charFetches.concat(rootFetches)).then(function (results) {
     results.forEach(function (r) {
-      if (!r.data) { needsReload = true; return; }
-      var idx = db.characters.findIndex(function (c) { return c.chaId === r.name; });
-      if (idx !== -1) {
-        db.characters[idx] = r.data;
-      } else {
-        // 캐시에는 있었지만 로컬에 없는 캐릭터 → 새로고침
-        needsReload = true;
+      if (r.type === 'char') {
+        if (!r.data) { needsReload = true; return; }
+        var idx = db.characters.findIndex(function (c) { return c.chaId === r.name; });
+        if (idx !== -1) {
+          db.characters[idx] = r.data;
+        } else {
+          needsReload = true;
+        }
+      } else if (r.type === 'root') {
+        if (!r.data) { needsReload = true; return; }
+        applyRootSafeKeys(db, r.data, r.block.changedKeys);
       }
     });
 

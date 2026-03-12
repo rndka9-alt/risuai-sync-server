@@ -34,6 +34,31 @@ function isDbWrite(req) {
 }
 
 // ---------------------------------------------------------------------------
+// ROOT 블록 키 비교: 어떤 top-level 키가 변경되었는지 반환
+// ---------------------------------------------------------------------------
+function diffRootKeys(oldJson, newJson) {
+  if (!oldJson || !newJson) return null;
+  try {
+    const oldObj = JSON.parse(oldJson);
+    const newObj = JSON.parse(newJson);
+    const allKeys = new Set([
+      ...Object.keys(oldObj),
+      ...Object.keys(newObj),
+    ]);
+    const changed = [];
+    for (const key of allKeys) {
+      if (key.startsWith('__')) continue; // __directory 등 메타 키 무시
+      if (JSON.stringify(oldObj[key]) !== JSON.stringify(newObj[key])) {
+        changed.push(key);
+      }
+    }
+    return changed;
+  } catch {
+    return null; // 파싱 실패 시 null → 클라이언트에서 reload fallback
+  }
+}
+
+// ---------------------------------------------------------------------------
 // DB write 처리: 파싱 → 해시 비교 → broadcast
 // ---------------------------------------------------------------------------
 function processDbWrite(buffer, senderClientId) {
@@ -67,7 +92,17 @@ function processDbWrite(buffer, senderClientId) {
     if (!cached) {
       added.push({ name, type: block.type });
     } else if (cached.hash !== block.hash) {
-      changed.push({ name, type: block.type });
+      const entry = { name, type: block.type };
+
+      // ROOT 블록: 변경된 top-level 키 목록 포함
+      if (block.type === 1) {
+        entry.changedKeys = diffRootKeys(
+          cache.dataCache.get(name),
+          block.json,
+        );
+      }
+
+      changed.push(entry);
     }
     cache.hashCache.set(name, { type: block.type, hash: block.hash });
     cache.dataCache.set(name, block.json);
