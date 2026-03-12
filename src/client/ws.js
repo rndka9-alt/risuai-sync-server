@@ -44,6 +44,8 @@ function connect() {
       if (msg.type === 'blocks-changed') {
         lastVersion = msg.version || lastVersion;
         handleBlocksChanged(msg);
+      } else if (msg.type === 'version-update') {
+        lastVersion = msg.version || lastVersion;
       } else if (msg.type === 'db-changed') {
         showNotification(); // Phase 1 fallback
       }

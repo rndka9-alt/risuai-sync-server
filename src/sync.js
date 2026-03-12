@@ -136,6 +136,14 @@ function processDbWrite(buffer, senderClientId) {
     { type: 'blocks-changed', version, changed, added, deleted, timestamp: Date.now() },
     senderClientId,
   );
+
+  // sender에게는 version만 알림 (catch-up 시 자기 변경분을 다시 받지 않도록)
+  if (senderClientId && clients.has(senderClientId)) {
+    const senderWs = clients.get(senderClientId);
+    if (senderWs.readyState === 1) {
+      senderWs.send(JSON.stringify({ type: 'version-update', version }));
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
