@@ -126,7 +126,11 @@ function processDbWrite(buffer, senderClientId) {
 
   const version = cache.addChangeLogEntry(changed.concat(added), deleted);
 
-  console.log(`[Sync] v${version}: ${changed.length} changed, ${added.length} added, ${deleted.length} deleted`);
+  console.log(`[Sync] v${version}: ${changed.length} changed, ${added.length} added, ${deleted.length} deleted (sender: ${senderClientId || 'unknown'})`);
+  changed.forEach(c => {
+    if (c.changedKeys) console.log(`[Sync]   ${c.name} (type ${c.type}): changedKeys=${JSON.stringify(c.changedKeys)}`);
+    else console.log(`[Sync]   ${c.name} (type ${c.type})`);
+  });
 
   broadcast(
     { type: 'blocks-changed', version, changed, added, deleted, timestamp: Date.now() },
