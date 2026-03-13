@@ -1,4 +1,6 @@
 import { DB_PATH, CLIENT_ID } from './config';
+import { state } from './state';
+import type { StreamState } from './state';
 
 // ---------------------------------------------------------------------------
 // fetch monkey-patch
@@ -99,18 +101,51 @@ const patchedFetch: typeof fetch = function (input, init) {
     }
   }
 
-  // POST /proxy2 시 sync 헤더 추가
+  // POST /proxy2 시 스트리밍 보호 + sync 헤더 추가
   if (init && init.method === 'POST' && input === '/proxy2') {
+    const target = findStreamTarget();
+
+    // 1차 방어: 다른 기기의 스트리밍이 활성 상태인 캐릭터면 즉시 차단
+    if (target) {
+      const hasActiveStream = [...state.activeStreams.values()]
+        .some((s) => s.targetCharId === target);
+      if (hasActiveStream) {
+        return Promise.resolve(new Response(
+          JSON.stringify({ error: 'streaming_in_progress', message: 'Another device is streaming to this character' }),
+          { status: 409, headers: { 'content-type': 'application/json' } },
+        ));
+      }
+    }
+
     if (!init.headers) init.headers = {};
     setHeader(init.headers, 'x-sync-client-id', CLIENT_ID);
-
-    const target = findStreamTarget();
     if (target) {
-      setHeader(init.headers, 'x-sync-stream-target', target);
+      setHeader(init.headers, 'x-sync-proxy2-target-char', target);
     }
   }
 
-  return originalFetch.call(window, input, init!);
+  return originalFetch.call(window, input, init!).then((response) => {
+    // 서버 409 수신 시 activeStreams 복구 (새로고침 후 fallback)
+    if (init?.method === 'POST' && input === '/proxy2' && response.status === 409) {
+      response.clone().json().then((body: { error?: string; streamId?: string; targetCharId?: string }) => {
+        if (body.error === 'streaming_in_progress' && body.streamId && body.targetCharId) {
+          if (!state.activeStreams.has(body.streamId)) {
+            const placeholder: StreamState = {
+              streamId: body.streamId,
+              targetCharId: body.targetCharId,
+              targetCharIndex: -1,
+              targetChatIndex: -1,
+              targetMsgIndex: -1,
+              resolved: false,
+              lastText: '',
+            };
+            state.activeStreams.set(body.streamId, placeholder);
+          }
+        }
+      }).catch(() => {});
+    }
+    return response;
+  });
 };
 
 window.fetch = patchedFetch;

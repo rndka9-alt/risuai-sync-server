@@ -172,6 +172,10 @@ export function handleBlocksChanged(msg: BlocksChangedMessage): void {
     results.forEach((r) => {
       if (r.type === 'char') {
         if (!r.data) { needsReload = true; return; }
+        // 스트리밍 중인 캐릭터는 블록 교체 skip (stream-data가 더 최신)
+        const hasActiveStream = [...state.activeStreams.values()]
+          .some((s) => s.targetCharId === r.name);
+        if (hasActiveStream) return;
         const idx = db.characters.findIndex((c) => c.chaId === r.name);
         if (idx !== -1) {
           db.characters[idx] = r.data;

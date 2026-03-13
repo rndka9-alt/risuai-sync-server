@@ -117,6 +117,13 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
   req.on('end', () => {
     const buffer = Buffer.concat(chunks);
 
+    // Streaming protection: 다른 기기의 스트리밍 중 write 차단
+    if (sync.isWriteBlockedByStream(senderClientId)) {
+      console.log(`[Sync] Write blocked: ${senderClientId || 'unknown'} (streaming in progress)`);
+      sendJson(res, 409, { error: 'streaming_in_progress', message: 'Write blocked: streaming in progress' });
+      return;
+    }
+
     const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: config.UPSTREAM.host };
     delete headers['x-sync-client-id'];
 
@@ -167,8 +174,20 @@ function isProxy2Post(req: http.IncomingMessage): boolean {
 function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void {
   const rawClientId = req.headers['x-sync-client-id'];
   const senderClientId = typeof rawClientId === 'string' ? rawClientId : 'unknown';
-  const rawTargetCharId = req.headers['x-sync-stream-target'];
+  const rawTargetCharId = req.headers['x-sync-proxy2-target-char'];
   const targetCharId = typeof rawTargetCharId === 'string' ? rawTargetCharId : null;
+
+  // Streaming protection: 동일 캐릭터에 대한 다른 기기의 proxy2 요청 차단
+  const existingStream = sync.findActiveStreamForChar(targetCharId);
+  if (existingStream && existingStream.senderClientId !== senderClientId) {
+    console.log(`[Sync] proxy2 blocked: ${senderClientId} → ${targetCharId} (active stream: ${existingStream.id})`);
+    sendJson(res, 409, {
+      error: 'streaming_in_progress',
+      streamId: existingStream.id,
+      targetCharId: existingStream.targetCharId,
+    });
+    return;
+  }
 
   // Strip sync headers before forwarding to upstream
   const headers: Record<string, string | string[] | undefined> = {
@@ -176,7 +195,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
     host: config.UPSTREAM.host,
   };
   delete headers['x-sync-client-id'];
-  delete headers['x-sync-stream-target'];
+  delete headers['x-sync-proxy2-target-char'];
 
   const proxyReq = http.request(
     {
