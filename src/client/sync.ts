@@ -38,11 +38,16 @@ export function catchUpFromServer(): void {
     })
     .then((data) => {
       if (!data) return;
-      if (!data.changes || !data.changes.length) {
-        state.lastVersion = data.currentVersion;
+      if (state.epoch && state.epoch !== data.epoch) {
+        showNotification();
         return;
       }
-      state.lastVersion = data.currentVersion;
+      state.epoch = data.epoch;
+      if (!data.changes || !data.changes.length) {
+        state.lastVersion = data.version;
+        return;
+      }
+      state.lastVersion = data.version;
 
       // 블록별 마지막 operation 추적 (changed vs deleted)
       const lastOp: Record<string, { op: 'changed'; block: BlockChange } | { op: 'deleted' }> = {};
@@ -68,7 +73,8 @@ export function catchUpFromServer(): void {
 
       handleBlocksChanged({
         type: 'blocks-changed',
-        version: data.currentVersion,
+        epoch: data.epoch,
+        version: data.version,
         changed: allChanged,
         added: [],
         deleted: allDeleted,

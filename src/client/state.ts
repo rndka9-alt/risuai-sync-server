@@ -12,6 +12,7 @@ export interface StreamState {
 }
 
 interface ClientState {
+  epoch: number;
   lastVersion: number;
   isFirstConnect: boolean;
   ws: WebSocket | null;
@@ -23,6 +24,7 @@ interface ClientState {
 }
 
 export const state: ClientState = {
+  epoch: 0,
   lastVersion: 0,
   isFirstConnect: true,
   ws: null,

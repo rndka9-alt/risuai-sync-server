@@ -135,7 +135,7 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
   });
 
   broadcast(
-    { type: 'blocks-changed', version, changed, added, deleted, timestamp: Date.now() },
+    { type: 'blocks-changed', epoch: cache.epoch, version, changed, added, deleted, timestamp: Date.now() },
     senderClientId,
   );
 
@@ -143,7 +143,7 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
   if (senderClientId && clients!.has(senderClientId)) {
     const senderWs = clients!.get(senderClientId)!;
     if (senderWs.readyState === 1) {
-      senderWs.send(JSON.stringify({ type: 'version-update', version } satisfies ServerMessage));
+      senderWs.send(JSON.stringify({ type: 'version-update', epoch: cache.epoch, version } satisfies ServerMessage));
     }
   }
 }

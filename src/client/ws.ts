@@ -31,10 +31,13 @@ export function connect(): void {
     state.reconnectDelay = 1000;
 
     if (state.isFirstConnect) {
-      // 첫 연결: 현재 버전만 가져옴
+      // 첫 연결: 현재 버전 + epoch 가져옴
       fetch('/sync/changes?since=0&clientId=' + encodeURIComponent(CLIENT_ID))
         .then((r) => r.json() as Promise<ChangesResponse>)
-        .then((data) => { state.lastVersion = data.currentVersion; })
+        .then((data) => {
+          state.epoch = data.epoch;
+          state.lastVersion = data.version;
+        })
         .catch(() => {});
       state.isFirstConnect = false;
       return;
@@ -49,9 +52,19 @@ export function connect(): void {
       if (typeof event.data !== 'string') return;
       const msg: ServerMessage = JSON.parse(event.data);
       if (msg.type === 'blocks-changed') {
+        if (state.epoch && state.epoch !== msg.epoch) {
+          showNotification();
+          return;
+        }
+        state.epoch = msg.epoch;
         state.lastVersion = msg.version || state.lastVersion;
         handleBlocksChanged(msg);
       } else if (msg.type === 'version-update') {
+        if (state.epoch && state.epoch !== msg.epoch) {
+          showNotification();
+          return;
+        }
+        state.epoch = msg.epoch;
         state.lastVersion = msg.version || state.lastVersion;
       } else if (msg.type === 'db-changed') {
         showNotification(); // Phase 1 fallback

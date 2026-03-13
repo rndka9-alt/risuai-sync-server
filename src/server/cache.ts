@@ -66,6 +66,7 @@ export const dataCache = new SizedCache(config.MAX_CACHE_SIZE);
 // ---------------------------------------------------------------------------
 // 내부 상태
 // ---------------------------------------------------------------------------
+export const epoch = Date.now();
 export let cachedDirectory: string[] = [];
 export let cacheInitialized = false;
 export let currentVersion = 0;
@@ -104,7 +105,7 @@ export function addChangeLogEntry(
 
 interface ChangesResult {
   status: number;
-  data: ChangesResponse | { error: string; currentVersion: number };
+  data: ChangesResponse | { error: string; version: number; epoch: number };
 }
 
 /**
@@ -113,17 +114,17 @@ interface ChangesResult {
  */
 export function getChangesSince(since: number, excludeClientId?: string | null): ChangesResult {
   if (changeLog.length === 0 || since >= currentVersion) {
-    return { status: 200, data: { currentVersion, changes: [] } };
+    return { status: 200, data: { epoch, version: currentVersion, changes: [] } };
   }
   const oldestVersion = changeLog[0].version;
   if (since > 0 && since < oldestVersion) {
-    return { status: 410, data: { error: 'version_expired', currentVersion } };
+    return { status: 410, data: { error: 'version_expired', version: currentVersion, epoch } };
   }
   let changes = changeLog.filter((entry) => entry.version > since);
   if (excludeClientId) {
     changes = changes.filter((entry) => entry.senderClientId !== excludeClientId);
   }
-  return { status: 200, data: { currentVersion, changes } };
+  return { status: 200, data: { epoch, version: currentVersion, changes } };
 }
 
 export function getManifest(): ManifestResponse {
@@ -132,6 +133,7 @@ export function getManifest(): ManifestResponse {
     blocks.push({ name, type, hash });
   }
   return {
+    epoch,
     version: currentVersion,
     cacheInitialized,
     blocks,

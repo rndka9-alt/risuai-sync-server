@@ -256,6 +256,7 @@ const server = http.createServer((req, res) => {
     if (req.method === 'GET' && url.pathname === '/sync/health') {
       const health: HealthResponse = {
         status: 'ok',
+        epoch: cache.epoch,
         clients: clients.size,
         version: cache.currentVersion,
         cacheInitialized: cache.cacheInitialized,
