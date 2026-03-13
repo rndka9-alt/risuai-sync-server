@@ -1,13 +1,11 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
 
 // ---------------------------------------------------------------------------
 // .env 파서 (dotenv 의존성 없음)
 // ---------------------------------------------------------------------------
-function loadEnvFile(filePath) {
+function loadEnvFile(filePath: string): void {
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
     for (const line of content.split('\n')) {
@@ -26,15 +24,13 @@ function loadEnvFile(filePath) {
   }
 }
 
-// src/ 의 부모 = sync/ 디렉토리
+// dist/ 의 부모 = 프로젝트 루트
 loadEnvFile(path.join(__dirname, '..', '.env'));
 
-module.exports = {
-  PORT: parseInt(process.env.PORT || '3000', 10),
-  UPSTREAM: new URL(process.env.UPSTREAM || 'http://localhost:6001'),
-  SYNC_TOKEN: process.env.SYNC_TOKEN || crypto.randomBytes(16).toString('hex'),
-  DB_PATH: process.env.DB_PATH || 'database/database.bin',
-  MAX_CACHE_SIZE: parseInt(process.env.MAX_CACHE_SIZE || '104857600', 10),
-  MAX_LOG_ENTRIES: parseInt(process.env.MAX_LOG_ENTRIES || '1000', 10),
-  SCRIPT_TAG: '<script defer src="/sync/client.js"></script>',
-};
+export const PORT = parseInt(process.env.PORT || '3000', 10);
+export const UPSTREAM = new URL(process.env.UPSTREAM || 'http://localhost:6001');
+export const SYNC_TOKEN = process.env.SYNC_TOKEN || crypto.randomBytes(16).toString('hex');
+export const DB_PATH = process.env.DB_PATH || 'database/database.bin';
+export const MAX_CACHE_SIZE = parseInt(process.env.MAX_CACHE_SIZE || '104857600', 10);
+export const MAX_LOG_ENTRIES = parseInt(process.env.MAX_LOG_ENTRIES || '1000', 10);
+export const SCRIPT_TAG = '<script defer src="/sync/client.js"></script>';

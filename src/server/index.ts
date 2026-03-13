@@ -1,35 +1,36 @@
-'use strict';
+import http from 'http';
+import crypto from 'crypto';
+import { Duplex } from 'stream';
+import WebSocket, { WebSocketServer } from 'ws';
 
-const http = require('http');
-const crypto = require('crypto');
-const { WebSocketServer } = require('ws');
-
-const config = require('./src/config');
-const cache = require('./src/cache');
-const sync = require('./src/sync');
-const { buildClientJs } = require('./src/client-builder');
+import * as config from './config';
+import * as cache from './cache';
+import * as sync from './sync';
+import { buildClientJs } from './client-bundle';
+import type { ClientMessage, HealthResponse } from '../shared/types';
 
 // ---------------------------------------------------------------------------
 // WebSocket
 // ---------------------------------------------------------------------------
-const clients = new Map(); // clientId → ws
+const clients = new Map<string, WebSocket>();
+const aliveState = new WeakMap<WebSocket, boolean>();
 const wss = new WebSocketServer({ noServer: true });
 
 sync.init(clients);
 
-wss.on('connection', (ws, req) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
+wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
+  const url = new URL(req.url!, `http://${req.headers.host}`);
   const clientId = url.searchParams.get('clientId') || crypto.randomBytes(8).toString('hex');
 
   clients.set(clientId, ws);
+  aliveState.set(ws, true);
   console.log(`[Sync] Client connected: ${clientId} (total: ${clients.size})`);
 
-  ws.isAlive = true;
-  ws.on('pong', () => { ws.isAlive = true; });
+  ws.on('pong', () => { aliveState.set(ws, true); });
 
-  ws.on('message', (raw) => {
+  ws.on('message', (raw: WebSocket.RawData) => {
     try {
-      const msg = JSON.parse(raw.toString());
+      const msg: ClientMessage = JSON.parse(raw.toString());
       if (msg.type === 'write-notify') {
         // DB write는 서버 프록시에서 감지하므로 여기서는 무시
         if (msg.file === config.DB_PATH) return;
@@ -58,12 +59,12 @@ wss.on('connection', (ws, req) => {
 
 const heartbeatInterval = setInterval(() => {
   for (const [id, ws] of clients) {
-    if (!ws.isAlive) {
+    if (!aliveState.get(ws)) {
       ws.terminate();
       clients.delete(id);
       continue;
     }
-    ws.isAlive = false;
+    aliveState.set(ws, false);
     ws.ping();
   }
 }, 30000);
@@ -73,7 +74,7 @@ wss.on('close', () => clearInterval(heartbeatInterval));
 // ---------------------------------------------------------------------------
 // HTTP 유틸
 // ---------------------------------------------------------------------------
-function sendJson(res, statusCode, data) {
+function sendJson(res: http.ServerResponse, statusCode: number, data: object): void {
   const body = JSON.stringify(data);
   res.writeHead(statusCode, {
     'content-type': 'application/json',
@@ -82,7 +83,7 @@ function sendJson(res, statusCode, data) {
   res.end(body);
 }
 
-function proxyRequest(req, res) {
+function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
   const proxyReq = http.request(
     {
       hostname: config.UPSTREAM.hostname,
@@ -92,9 +93,9 @@ function proxyRequest(req, res) {
       headers: { ...req.headers, host: config.UPSTREAM.host },
     },
     (proxyRes) => {
-      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      res.writeHead(proxyRes.statusCode!, proxyRes.headers);
       proxyRes.pipe(res);
-    }
+    },
   );
   req.pipe(proxyReq);
   proxyReq.on('error', () => {
@@ -105,14 +106,15 @@ function proxyRequest(req, res) {
   });
 }
 
-function proxyDbWrite(req, res) {
-  const senderClientId = req.headers['x-sync-client-id'] || null;
-  const chunks = [];
-  req.on('data', (chunk) => chunks.push(chunk));
+function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void {
+  const rawClientId = req.headers['x-sync-client-id'];
+  const senderClientId = typeof rawClientId === 'string' ? rawClientId : null;
+  const chunks: Buffer[] = [];
+  req.on('data', (chunk: Buffer) => chunks.push(chunk));
   req.on('end', () => {
     const buffer = Buffer.concat(chunks);
 
-    const headers = { ...req.headers, host: config.UPSTREAM.host };
+    const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: config.UPSTREAM.host };
     delete headers['x-sync-client-id'];
 
     const proxyReq = http.request(
@@ -124,10 +126,10 @@ function proxyDbWrite(req, res) {
         headers,
       },
       (proxyRes) => {
-        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+        res.writeHead(proxyRes.statusCode!, proxyRes.headers);
         proxyRes.pipe(res);
 
-        if (proxyRes.statusCode >= 200 && proxyRes.statusCode < 300) {
+        if (proxyRes.statusCode! >= 200 && proxyRes.statusCode! < 300) {
           setImmediate(() => {
             try {
               sync.processDbWrite(buffer, senderClientId);
@@ -137,7 +139,7 @@ function proxyDbWrite(req, res) {
             }
           });
         }
-      }
+      },
     );
 
     proxyReq.on('error', () => {
@@ -157,8 +159,8 @@ function proxyDbWrite(req, res) {
 // ---------------------------------------------------------------------------
 const server = http.createServer((req, res) => {
   // --- /sync/* 경로 ---
-  if (req.url.startsWith('/sync/')) {
-    const url = new URL(req.url, `http://${req.headers.host}`);
+  if (req.url!.startsWith('/sync/')) {
+    const url = new URL(req.url!, `http://${req.headers.host}`);
 
     if (req.method === 'GET' && url.pathname === '/sync/client.js') {
       const js = buildClientJs();
@@ -172,13 +174,14 @@ const server = http.createServer((req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/sync/health') {
-      sendJson(res, 200, {
+      const health: HealthResponse = {
         status: 'ok',
         clients: clients.size,
         version: cache.currentVersion,
         cacheInitialized: cache.cacheInitialized,
         cachedBlocks: cache.hashCache.size,
-      });
+      };
+      sendJson(res, 200, health);
       return;
     }
 
@@ -194,7 +197,7 @@ const server = http.createServer((req, res) => {
         return;
       }
       const hashEntry = cache.hashCache.get(name);
-      const headers = {
+      const headers: Record<string, string | number> = {
         'content-type': 'application/json; charset=utf-8',
         'content-length': Buffer.byteLength(data),
       };
@@ -228,21 +231,21 @@ const server = http.createServer((req, res) => {
         headers: { ...req.headers, host: config.UPSTREAM.host },
       },
       (proxyRes) => {
-        const chunks = [];
-        proxyRes.on('data', (chunk) => chunks.push(chunk));
+        const chunks: Buffer[] = [];
+        proxyRes.on('data', (chunk: Buffer) => chunks.push(chunk));
         proxyRes.on('end', () => {
           let html = Buffer.concat(chunks).toString('utf-8');
           html = html.replace('</head>', config.SCRIPT_TAG + '</head>');
 
           const headers = { ...proxyRes.headers };
-          headers['content-length'] = Buffer.byteLength(html);
+          headers['content-length'] = String(Buffer.byteLength(html));
           delete headers['content-encoding'];
           delete headers['transfer-encoding'];
 
-          res.writeHead(proxyRes.statusCode, headers);
+          res.writeHead(proxyRes.statusCode!, headers);
           res.end(html);
         });
-      }
+      },
     );
     proxyReq.setHeader('accept-encoding', 'identity');
     proxyReq.on('error', () => {
@@ -266,8 +269,8 @@ const server = http.createServer((req, res) => {
 // ---------------------------------------------------------------------------
 // WebSocket upgrade
 // ---------------------------------------------------------------------------
-server.on('upgrade', (req, socket, head) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
+server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
+  const url = new URL(req.url!, `http://${req.headers.host}`);
 
   if (url.pathname === '/sync/ws') {
     const token = url.searchParams.get('token');
@@ -295,7 +298,7 @@ server.on('upgrade', (req, socket, head) => {
     socket.write(
       `HTTP/1.1 ${proxyRes.statusCode || 101} ${proxyRes.statusMessage || 'Switching Protocols'}\r\n` +
       Object.entries(proxyRes.headers).map(([k, v]) => `${k}: ${v}`).join('\r\n') +
-      '\r\n\r\n'
+      '\r\n\r\n',
     );
     if (proxyHead.length) socket.write(proxyHead);
     proxySocket.pipe(socket);

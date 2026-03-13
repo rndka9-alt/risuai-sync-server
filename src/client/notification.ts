@@ -1,15 +1,17 @@
+import { state } from './state';
+
 // ---------------------------------------------------------------------------
 // 알림 UI
 // ---------------------------------------------------------------------------
-function showNotification() {
-  if (notificationEl) {
+export function showNotification(): void {
+  if (state.notificationEl) {
     resetDismissTimer();
     return;
   }
 
-  notificationEl = document.createElement('div');
-  notificationEl.id = 'risu-sync-notification';
-  notificationEl.innerHTML =
+  const el = document.createElement('div');
+  el.id = 'risu-sync-notification';
+  el.innerHTML =
     '<div style="' +
     'position:fixed;top:16px;left:16px;right:16px;' +
     'max-width:400px;margin:0 auto;box-sizing:border-box;' +
@@ -31,30 +33,27 @@ function showNotification() {
     '">\ubb34\uc2dc</button>' +
     '</div></div>';
 
-  document.body.appendChild(notificationEl);
+  state.notificationEl = el;
+  document.body.appendChild(el);
 
-  document.getElementById('risu-sync-reload').onclick = function () {
-    location.reload();
-  };
-  document.getElementById('risu-sync-dismiss').onclick = function () {
-    hideNotification();
-  };
+  document.getElementById('risu-sync-reload')!.onclick = () => location.reload();
+  document.getElementById('risu-sync-dismiss')!.onclick = () => hideNotification();
 
   resetDismissTimer();
 }
 
-function hideNotification() {
-  if (notificationEl) {
-    notificationEl.remove();
-    notificationEl = null;
+export function hideNotification(): void {
+  if (state.notificationEl) {
+    state.notificationEl.remove();
+    state.notificationEl = null;
   }
-  if (dismissTimer) {
-    clearTimeout(dismissTimer);
-    dismissTimer = null;
+  if (state.dismissTimer) {
+    clearTimeout(state.dismissTimer);
+    state.dismissTimer = null;
   }
 }
 
-function resetDismissTimer() {
-  if (dismissTimer) clearTimeout(dismissTimer);
-  dismissTimer = setTimeout(hideNotification, 30000);
+function resetDismissTimer(): void {
+  if (state.dismissTimer) clearTimeout(state.dismissTimer);
+  state.dismissTimer = setTimeout(hideNotification, 30000);
 }
