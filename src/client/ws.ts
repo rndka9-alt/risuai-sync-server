@@ -32,7 +32,7 @@ export function connect(): void {
 
     if (state.isFirstConnect) {
       // 첫 연결: 현재 버전만 가져옴
-      fetch('/sync/changes?since=0')
+      fetch('/sync/changes?since=0&clientId=' + encodeURIComponent(CLIENT_ID))
         .then((r) => r.json() as Promise<ChangesResponse>)
         .then((data) => { state.lastVersion = data.currentVersion; })
         .catch(() => {});

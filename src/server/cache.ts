@@ -86,6 +86,7 @@ const changeLog: ChangeLogEntry[] = [];
 export function addChangeLogEntry(
   changed: BlockChange[],
   deleted: string[],
+  senderClientId?: string | null,
 ): number {
   currentVersion++;
   changeLog.push({
@@ -93,6 +94,7 @@ export function addChangeLogEntry(
     timestamp: Date.now(),
     changed,
     deleted,
+    senderClientId: senderClientId || null,
   });
   while (changeLog.length > config.MAX_LOG_ENTRIES) {
     changeLog.shift();
@@ -107,8 +109,9 @@ interface ChangesResult {
 
 /**
  * since 이후의 변경분을 반환.
+ * excludeClientId가 주어지면 해당 클라이언트가 보낸 변경분은 제외.
  */
-export function getChangesSince(since: number): ChangesResult {
+export function getChangesSince(since: number, excludeClientId?: string | null): ChangesResult {
   if (changeLog.length === 0 || since >= currentVersion) {
     return { status: 200, data: { currentVersion, changes: [] } };
   }
@@ -116,7 +119,10 @@ export function getChangesSince(since: number): ChangesResult {
   if (since > 0 && since < oldestVersion) {
     return { status: 410, data: { error: 'version_expired', currentVersion } };
   }
-  const changes = changeLog.filter((entry) => entry.version > since);
+  let changes = changeLog.filter((entry) => entry.version > since);
+  if (excludeClientId) {
+    changes = changes.filter((entry) => entry.senderClientId !== excludeClientId);
+  }
   return { status: 200, data: { currentVersion, changes } };
 }
 

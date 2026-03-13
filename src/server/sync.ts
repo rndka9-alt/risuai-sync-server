@@ -126,7 +126,7 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
     return;
   }
 
-  const version = cache.addChangeLogEntry(changed.concat(added), deleted);
+  const version = cache.addChangeLogEntry(changed.concat(added), deleted, senderClientId);
 
   console.log(`[Sync] v${version}: ${changed.length} changed, ${added.length} added, ${deleted.length} deleted (sender: ${senderClientId || 'unknown'})`);
   changed.forEach((c) => {

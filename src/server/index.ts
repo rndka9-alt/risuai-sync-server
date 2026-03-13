@@ -52,7 +52,10 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   });
 
   ws.on('close', () => {
-    clients.delete(clientId);
+    // 같은 clientId로 재연결된 경우, 새 ws를 삭제하지 않도록 본인 확인
+    if (clients.get(clientId) === ws) {
+      clients.delete(clientId);
+    }
     console.log(`[Sync] Client disconnected: ${clientId} (total: ${clients.size})`);
   });
 });
@@ -209,7 +212,8 @@ const server = http.createServer((req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/sync/changes') {
       const since = parseInt(url.searchParams.get('since') || '0', 10);
-      const result = cache.getChangesSince(since);
+      const clientId = url.searchParams.get('clientId');
+      const result = cache.getChangesSince(since, clientId);
       sendJson(res, result.status, result.data);
       return;
     }

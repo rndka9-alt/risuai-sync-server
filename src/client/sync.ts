@@ -1,5 +1,6 @@
 import { BLOCK_TYPE, isSafeRootKey } from '../shared/blockTypes';
 import type { BlockChange, BlocksChangedMessage, ChangesResponse, ChangeLogEntry } from '../shared/types';
+import { CLIENT_ID } from './config';
 import { state } from './state';
 import { showNotification } from './notification';
 
@@ -26,7 +27,7 @@ declare var __pluginApis__: PluginApis | undefined;
 // Catch-up: 놓친 변경분 복구
 // ---------------------------------------------------------------------------
 export function catchUpFromServer(): void {
-  fetch('/sync/changes?since=' + state.lastVersion)
+  fetch('/sync/changes?since=' + state.lastVersion + '&clientId=' + encodeURIComponent(CLIENT_ID))
     .then((r) => {
       if (r.status === 410) {
         showNotification();

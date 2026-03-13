@@ -56,6 +56,7 @@ export interface ChangeLogEntry {
   timestamp: number;
   changed: BlockChange[];
   deleted: string[];
+  senderClientId?: string | null;
 }
 
 export interface ChangesResponse {
