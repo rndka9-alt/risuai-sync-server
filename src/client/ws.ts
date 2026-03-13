@@ -1,6 +1,6 @@
 import { SYNC_TOKEN, CLIENT_ID } from './config';
 import { state, MAX_RECONNECT_DELAY } from './state';
-import { catchUpFromServer, handleBlocksChanged } from './sync';
+import { catchUpFromServer, handleBlocksChanged, handleStreamStart, handleStreamData, handleStreamEnd } from './sync';
 import { showNotification } from './notification';
 import type { ServerMessage, ChangesResponse } from '../shared/types';
 
@@ -55,6 +55,12 @@ export function connect(): void {
         state.lastVersion = msg.version || state.lastVersion;
       } else if (msg.type === 'db-changed') {
         showNotification(); // Phase 1 fallback
+      } else if (msg.type === 'stream-start') {
+        handleStreamStart(msg);
+      } else if (msg.type === 'stream-data') {
+        handleStreamData(msg);
+      } else if (msg.type === 'stream-end') {
+        handleStreamEnd(msg);
       }
     } catch {
       // 파싱 실패 무시

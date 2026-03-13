@@ -15,7 +15,10 @@ export interface BlockChange {
 export type ServerMessage =
   | BlocksChangedMessage
   | VersionUpdateMessage
-  | DbChangedMessage;
+  | DbChangedMessage
+  | StreamStartMessage
+  | StreamDataMessage
+  | StreamEndMessage;
 
 export interface BlocksChangedMessage {
   type: 'blocks-changed';
@@ -34,6 +37,27 @@ export interface VersionUpdateMessage {
 export interface DbChangedMessage {
   type: 'db-changed';
   file: string;
+  timestamp: number;
+}
+
+export interface StreamStartMessage {
+  type: 'stream-start';
+  streamId: string;
+  senderClientId: string;
+  targetCharId: string | null;
+  timestamp: number;
+}
+
+export interface StreamDataMessage {
+  type: 'stream-data';
+  streamId: string;
+  text: string;
+  timestamp: number;
+}
+
+export interface StreamEndMessage {
+  type: 'stream-end';
+  streamId: string;
   timestamp: number;
 }
 

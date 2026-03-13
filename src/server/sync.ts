@@ -2,7 +2,7 @@ import type { IncomingMessage } from 'http';
 import type WebSocket from 'ws';
 import { parseRisuSaveBlocks } from './parser';
 import { BLOCK_TYPE } from '../shared/blockTypes';
-import type { BlockChange, ServerMessage } from '../shared/types';
+import type { BlockChange, ServerMessage, StreamStartMessage, StreamDataMessage, StreamEndMessage } from '../shared/types';
 import * as cache from './cache';
 import * as config from './config';
 
@@ -165,4 +165,154 @@ export function broadcastDbChanged(excludeClientId: string | null): void {
     { type: 'db-changed', file: config.DB_PATH, timestamp: Date.now() },
     excludeClientId,
   );
+}
+
+// ---------------------------------------------------------------------------
+// SSE Stream Parsing & Broadcasting
+// ---------------------------------------------------------------------------
+interface ActiveStream {
+  id: string;
+  senderClientId: string;
+  targetCharId: string | null;
+  accumulatedText: string;
+  lastBroadcastTime: number;
+  lineBuffer: string;
+}
+
+const activeStreams = new Map<string, ActiveStream>();
+const STREAM_BROADCAST_INTERVAL_MS = 50;
+
+export function createStream(
+  streamId: string,
+  senderClientId: string,
+  targetCharId: string | null,
+): void {
+  const stream: ActiveStream = {
+    id: streamId,
+    senderClientId,
+    targetCharId,
+    accumulatedText: '',
+    lastBroadcastTime: 0,
+    lineBuffer: '',
+  };
+  activeStreams.set(streamId, stream);
+
+  const msg: StreamStartMessage = {
+    type: 'stream-start',
+    streamId,
+    senderClientId,
+    targetCharId,
+    timestamp: Date.now(),
+  };
+  broadcast(msg, senderClientId);
+}
+
+export function processStreamChunk(streamId: string, chunk: Buffer): void {
+  const stream = activeStreams.get(streamId);
+  if (!stream) return;
+
+  stream.lineBuffer += chunk.toString('utf-8');
+
+  // Process complete lines only
+  const lastNewline = stream.lineBuffer.lastIndexOf('\n');
+  if (lastNewline === -1) return;
+
+  const complete = stream.lineBuffer.slice(0, lastNewline + 1);
+  stream.lineBuffer = stream.lineBuffer.slice(lastNewline + 1);
+
+  const deltas = parseSSEDeltas(complete);
+  if (deltas.length === 0) return;
+
+  for (const delta of deltas) {
+    stream.accumulatedText += delta;
+  }
+
+  // Throttle broadcasts
+  const now = Date.now();
+  if (now - stream.lastBroadcastTime >= STREAM_BROADCAST_INTERVAL_MS) {
+    stream.lastBroadcastTime = now;
+    const msg: StreamDataMessage = {
+      type: 'stream-data',
+      streamId,
+      text: stream.accumulatedText,
+      timestamp: now,
+    };
+    broadcast(msg, stream.senderClientId);
+  }
+}
+
+export function endStream(streamId: string): void {
+  const stream = activeStreams.get(streamId);
+  if (!stream) return;
+
+  // Process any remaining data in line buffer
+  if (stream.lineBuffer.trim()) {
+    const deltas = parseSSEDeltas(stream.lineBuffer);
+    for (const delta of deltas) {
+      stream.accumulatedText += delta;
+    }
+  }
+
+  // Flush accumulated text if any was throttled
+  if (stream.accumulatedText.length > 0) {
+    const dataMsg: StreamDataMessage = {
+      type: 'stream-data',
+      streamId,
+      text: stream.accumulatedText,
+      timestamp: Date.now(),
+    };
+    broadcast(dataMsg, stream.senderClientId);
+  }
+
+  const endMsg: StreamEndMessage = {
+    type: 'stream-end',
+    streamId,
+    timestamp: Date.now(),
+  };
+  broadcast(endMsg, stream.senderClientId);
+  activeStreams.delete(streamId);
+}
+
+/**
+ * Parse SSE text to extract text deltas.
+ * Handles OpenAI and Anthropic formats.
+ * Best-effort: missing deltas are acceptable since final state comes from DB sync.
+ */
+function parseSSEDeltas(raw: string): string[] {
+  const deltas: string[] = [];
+
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data: ')) continue;
+    const payload = trimmed.slice(6).trim();
+    if (payload === '[DONE]' || payload === '') continue;
+
+    try {
+      const json = JSON.parse(payload);
+
+      // OpenAI format: choices[].delta.content
+      if (json.choices && Array.isArray(json.choices)) {
+        for (const choice of json.choices) {
+          const content = choice?.delta?.content;
+          if (typeof content === 'string') {
+            deltas.push(content);
+          }
+        }
+        continue;
+      }
+
+      // Anthropic format: content_block_delta → delta.text
+      if (json.type === 'content_block_delta') {
+        const text = json.delta?.text;
+        if (typeof text === 'string') {
+          deltas.push(text);
+        }
+        continue;
+      }
+    } catch {
+      // JSON parse failure — skip
+    }
+  }
+
+  return deltas;
 }

@@ -1,7 +1,8 @@
 import { BLOCK_TYPE, isSafeRootKey } from '../shared/blockTypes';
-import type { BlockChange, BlocksChangedMessage, ChangesResponse, ChangeLogEntry } from '../shared/types';
+import type { BlockChange, BlocksChangedMessage, ChangesResponse, ChangeLogEntry, StreamStartMessage, StreamDataMessage, StreamEndMessage } from '../shared/types';
 import { CLIENT_ID } from './config';
 import { state } from './state';
+import type { StreamState } from './state';
 import { showNotification } from './notification';
 
 // ---------------------------------------------------------------------------
@@ -177,8 +178,177 @@ export function handleBlocksChanged(msg: BlocksChangedMessage): void {
       }
     });
 
+    // After block sync, handle active streams
+    for (const [, stream] of state.activeStreams) {
+      if (!stream.resolved) {
+        // Try to resolve using isStreaming flag from synced data
+        resolveStreamFromDb(stream, db);
+      }
+      if (stream.resolved && stream.lastText) {
+        // Overwrite with latest stream text (more recent than cached block)
+        applyStreamText(stream, db);
+      }
+    }
+
     if (needsReload) {
       showNotification();
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// Stream sync: apply streaming text from other devices
+// ---------------------------------------------------------------------------
+
+function resolveStreamTarget(streamState: StreamState, db: RisuDatabase): boolean {
+  if (streamState.resolved) return true;
+  if (!streamState.targetCharId) return false;
+
+  const charIndex = db.characters.findIndex(
+    (c: RisuCharacter) => c && c.chaId === streamState.targetCharId,
+  );
+  if (charIndex === -1) return false;
+
+  const char = db.characters[charIndex];
+  const chatPage = (char as Record<string, unknown>).chatPage as number ?? 0;
+  const chats = (char as Record<string, unknown>).chats as Array<{ message?: Array<Record<string, unknown>>; isStreaming?: boolean }> | undefined;
+  const chat = chats?.[chatPage];
+  if (!chat || !chat.message) return false;
+
+  streamState.targetCharIndex = charIndex;
+  streamState.targetChatIndex = chatPage;
+
+  // Find or create the AI response message
+  const messages = chat.message;
+  const lastMsg = messages[messages.length - 1];
+
+  if (lastMsg && lastMsg.role === 'char') {
+    streamState.targetMsgIndex = messages.length - 1;
+  } else {
+    // Create placeholder AI message
+    messages.push({
+      role: 'char',
+      data: '',
+      saying: streamState.targetCharId,
+      time: Date.now(),
+    });
+    streamState.targetMsgIndex = messages.length - 1;
+  }
+
+  chat.isStreaming = true;
+  streamState.resolved = true;
+  (char as Record<string, unknown>).reloadKeys = ((char as Record<string, unknown>).reloadKeys as number || 0) + 1;
+  return true;
+}
+
+function resolveStreamFromDb(streamState: StreamState, db: RisuDatabase): boolean {
+  if (streamState.resolved) return true;
+
+  // Search for a character with isStreaming === true
+  for (let ci = 0; ci < db.characters.length; ci++) {
+    const char = db.characters[ci];
+    const chats = (char as Record<string, unknown>).chats as Array<{ message?: Array<Record<string, unknown>>; isStreaming?: boolean }> | undefined;
+    if (!chats) continue;
+    for (let chatIdx = 0; chatIdx < chats.length; chatIdx++) {
+      const chat = chats[chatIdx];
+      if (chat?.isStreaming === true && chat.message && chat.message.length > 0) {
+        streamState.targetCharId = char.chaId;
+        streamState.targetCharIndex = ci;
+        streamState.targetChatIndex = chatIdx;
+        streamState.targetMsgIndex = chat.message.length - 1;
+        streamState.resolved = true;
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function applyStreamText(streamState: StreamState, db: RisuDatabase): void {
+  const char = db.characters[streamState.targetCharIndex];
+  if (!char) return;
+  const chats = (char as Record<string, unknown>).chats as Array<{ message?: Array<Record<string, unknown>>; isStreaming?: boolean }> | undefined;
+  const chat = chats?.[streamState.targetChatIndex];
+  if (!chat?.message) return;
+
+  if (streamState.targetMsgIndex >= 0 && streamState.targetMsgIndex < chat.message.length) {
+    chat.message[streamState.targetMsgIndex].data = streamState.lastText;
+  }
+
+  (char as Record<string, unknown>).reloadKeys = ((char as Record<string, unknown>).reloadKeys as number || 0) + 1;
+}
+
+export function handleStreamStart(msg: StreamStartMessage): void {
+  const streamState: StreamState = {
+    streamId: msg.streamId,
+    targetCharId: msg.targetCharId,
+    targetCharIndex: -1,
+    targetChatIndex: -1,
+    targetMsgIndex: -1,
+    resolved: false,
+    lastText: '',
+  };
+
+  // Try to resolve immediately using hint
+  if (msg.targetCharId && typeof __pluginApis__ !== 'undefined') {
+    try {
+      const db = __pluginApis__.getDatabase();
+      resolveStreamTarget(streamState, db);
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  state.activeStreams.set(msg.streamId, streamState);
+}
+
+export function handleStreamData(msg: StreamDataMessage): void {
+  const streamState = state.activeStreams.get(msg.streamId);
+  if (!streamState) return;
+
+  streamState.lastText = msg.text;
+
+  // Try to resolve if not yet resolved
+  if (!streamState.resolved && typeof __pluginApis__ !== 'undefined') {
+    try {
+      const db = __pluginApis__.getDatabase();
+      resolveStreamTarget(streamState, db);
+    } catch {
+      return;
+    }
+  }
+
+  if (!streamState.resolved) return;
+
+  try {
+    const db = __pluginApis__!.getDatabase();
+    applyStreamText(streamState, db);
+  } catch {
+    // Non-fatal
+  }
+}
+
+export function handleStreamEnd(msg: StreamEndMessage): void {
+  const streamState = state.activeStreams.get(msg.streamId);
+  if (!streamState) return;
+
+  try {
+    if (streamState.resolved && typeof __pluginApis__ !== 'undefined') {
+      const db = __pluginApis__.getDatabase();
+      const char = db.characters?.[streamState.targetCharIndex];
+      if (char) {
+        const chats = (char as Record<string, unknown>).chats as Array<{ isStreaming?: boolean }> | undefined;
+        const chat = chats?.[streamState.targetChatIndex];
+        if (chat) {
+          chat.isStreaming = false;
+        }
+        (char as Record<string, unknown>).reloadKeys = ((char as Record<string, unknown>).reloadKeys as number || 0) + 1;
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  state.activeStreams.delete(msg.streamId);
 }

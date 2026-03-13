@@ -158,6 +158,83 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
 }
 
 // ---------------------------------------------------------------------------
+// proxy2 스트리밍 프록시
+// ---------------------------------------------------------------------------
+function isProxy2Post(req: http.IncomingMessage): boolean {
+  return req.method === 'POST' && (req.url === '/proxy2' || req.url?.startsWith('/proxy2?') === true);
+}
+
+function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void {
+  const rawClientId = req.headers['x-sync-client-id'];
+  const senderClientId = typeof rawClientId === 'string' ? rawClientId : 'unknown';
+  const rawTargetCharId = req.headers['x-sync-stream-target'];
+  const targetCharId = typeof rawTargetCharId === 'string' ? rawTargetCharId : null;
+
+  // Strip sync headers before forwarding to upstream
+  const headers: Record<string, string | string[] | undefined> = {
+    ...req.headers,
+    host: config.UPSTREAM.host,
+  };
+  delete headers['x-sync-client-id'];
+  delete headers['x-sync-stream-target'];
+
+  const proxyReq = http.request(
+    {
+      hostname: config.UPSTREAM.hostname,
+      port: config.UPSTREAM.port,
+      path: req.url,
+      method: req.method,
+      headers,
+    },
+    (proxyRes) => {
+      const contentType = proxyRes.headers['content-type'] || '';
+      const isSSE = contentType.includes('text/event-stream');
+
+      if (!isSSE) {
+        // Non-streaming: pass through normally
+        res.writeHead(proxyRes.statusCode!, proxyRes.headers);
+        proxyRes.pipe(res);
+        return;
+      }
+
+      // SSE streaming response — tee it
+      const streamId = crypto.randomBytes(8).toString('hex');
+      console.log(`[Sync] Stream started: ${streamId} (sender: ${senderClientId}, target: ${targetCharId})`);
+
+      sync.createStream(streamId, senderClientId, targetCharId);
+
+      res.writeHead(proxyRes.statusCode!, proxyRes.headers);
+
+      proxyRes.on('data', (chunk: Buffer) => {
+        res.write(chunk);
+        sync.processStreamChunk(streamId, chunk);
+      });
+
+      proxyRes.on('end', () => {
+        console.log(`[Sync] Stream ended: ${streamId}`);
+        sync.endStream(streamId);
+        res.end();
+      });
+
+      proxyRes.on('error', (err) => {
+        console.error(`[Sync] Stream error: ${streamId}`, err);
+        sync.endStream(streamId);
+        if (!res.writableEnded) res.end();
+      });
+    },
+  );
+
+  req.pipe(proxyReq);
+
+  proxyReq.on('error', () => {
+    if (!res.headersSent) {
+      res.writeHead(502, { 'content-type': 'text/plain' });
+    }
+    res.end('Bad Gateway');
+  });
+}
+
+// ---------------------------------------------------------------------------
 // HTTP 서버
 // ---------------------------------------------------------------------------
 const server = http.createServer((req, res) => {
@@ -263,6 +340,12 @@ const server = http.createServer((req, res) => {
   // --- DB write → 버퍼링 프록시 ---
   if (sync.isDbWrite(req)) {
     proxyDbWrite(req, res);
+    return;
+  }
+
+  // --- POST /proxy2 → 스트리밍 인식 프록시 ---
+  if (isProxy2Post(req)) {
+    proxyProxy2(req, res);
     return;
   }
 
