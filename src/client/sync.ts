@@ -1,4 +1,4 @@
-import { BLOCK_TYPE, isSafeRootKey } from '../shared/blockTypes';
+import { BLOCK_TYPE, isSyncedRootKey } from '../shared/blockTypes';
 import type { BlockChange, BlocksChangedMessage, ChangesResponse, ChangeLogEntry, StreamStartMessage, StreamDataMessage, StreamEndMessage } from '../shared/types';
 import { CLIENT_ID } from './config';
 import { state } from './state';
@@ -85,12 +85,14 @@ export function catchUpFromServer(): void {
 }
 
 // ---------------------------------------------------------------------------
-// ROOT 블록의 safe key만 변경되었는지 확인
+// ROOT 블록이 live-apply 가능한지 확인
+// changedKeys가 모두 SYNCED이고 unknown 키 없음 → safe
 // ---------------------------------------------------------------------------
 function isRootSafeChange(block: BlockChange): boolean {
   if (!block.changedKeys || !Array.isArray(block.changedKeys)) return false;
   if (block.changedKeys.length === 0) return false;
-  return block.changedKeys.every(isSafeRootKey);
+  if (block.hasUnknownKeys) return false;
+  return block.changedKeys.every(isSyncedRootKey);
 }
 
 // ---------------------------------------------------------------------------

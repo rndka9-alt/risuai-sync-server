@@ -15,6 +15,8 @@ export interface BlockChange {
   name: string;
   type: BlockType;
   changedKeys?: string[] | null;
+  /** true if changedKeys contains keys not in SYNCED_ROOT_KEYS (client should reload) */
+  hasUnknownKeys?: boolean;
 }
 
 // ---------------------------------------------------------------------------

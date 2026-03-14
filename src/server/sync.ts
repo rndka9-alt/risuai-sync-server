@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'http';
 import type WebSocket from 'ws';
 import { parseRisuSaveBlocks } from './parser';
-import { BLOCK_TYPE } from '../shared/blockTypes';
+import { BLOCK_TYPE, isSyncedRootKey, isIgnoredRootKey } from '../shared/blockTypes';
 import type { BlockChange, ServerMessage, StreamStartMessage, StreamDataMessage, StreamEndMessage } from '../shared/types';
 import * as cache from './cache';
 import * as config from './config';
@@ -36,9 +36,15 @@ export function isDbWrite(req: IncomingMessage): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// ROOT 블록 키 비교: 어떤 top-level 키가 변경되었는지 반환
+// ROOT 블록 키 비교: 3분류 (SYNCED / IGNORED / unknown)
 // ---------------------------------------------------------------------------
-function diffRootKeys(oldJson: string | null, newJson: string): string[] | null {
+interface DiffRootResult {
+  syncedKeys: string[];   // SYNCED_ROOT_KEYS에 있는 변경 키
+  unknownKeys: string[];  // 어디에도 없는 키 → reload 유도
+  ignoredOnly: boolean;   // 변경이 전부 IGNORED 키뿐인지
+}
+
+function diffRootKeys(oldJson: string | null, newJson: string): DiffRootResult | null {
   if (!oldJson || !newJson) return null;
   try {
     const oldObj = JSON.parse(oldJson);
@@ -47,14 +53,23 @@ function diffRootKeys(oldJson: string | null, newJson: string): string[] | null 
       ...Object.keys(oldObj),
       ...Object.keys(newObj),
     ]);
-    const changed: string[] = [];
+    const syncedKeys: string[] = [];
+    const unknownKeys: string[] = [];
+    let hasIgnored = false;
     for (const key of allKeys) {
       if (key.startsWith('__')) continue; // __directory 등 메타 키 무시
       if (JSON.stringify(oldObj[key]) !== JSON.stringify(newObj[key])) {
-        changed.push(key);
+        if (isSyncedRootKey(key)) {
+          syncedKeys.push(key);
+        } else if (isIgnoredRootKey(key)) {
+          hasIgnored = true;
+        } else {
+          unknownKeys.push(key);
+        }
       }
     }
-    return changed;
+    const ignoredOnly = syncedKeys.length === 0 && unknownKeys.length === 0 && hasIgnored;
+    return { syncedKeys, unknownKeys, ignoredOnly };
   } catch {
     return null; // 파싱 실패 시 null → 클라이언트에서 reload fallback
   }
@@ -94,18 +109,29 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
     if (!cached) {
       added.push({ name, type: block.type });
     } else if (cached.hash !== block.hash) {
-      const entry: BlockChange = { name, type: block.type };
-
-      // ROOT 블록: 변경된 top-level 키 목록 포함
+      // ROOT 블록: 3분류 필터링
       if (block.type === BLOCK_TYPE.ROOT) {
-        entry.changedKeys = diffRootKeys(
-          cache.dataCache.get(name),
-          block.json,
-        );
+        const diff = diffRootKeys(cache.dataCache.get(name), block.json);
+        if (diff && diff.ignoredOnly) {
+          // IGNORED 키만 변경 → broadcast 안 함 (echo loop 차단)
+          // 캐시는 업데이트 (아래에서)
+        } else {
+          const entry: BlockChange = { name, type: block.type };
+          if (diff) {
+            entry.changedKeys = [...diff.syncedKeys, ...diff.unknownKeys];
+            entry.hasUnknownKeys = diff.unknownKeys.length > 0;
+          } else {
+            // diff 실패 (null) → 전체 reload fallback
+            entry.changedKeys = null;
+            entry.hasUnknownKeys = true;
+          }
+          changed.push(entry);
+        }
+      } else {
+        changed.push({ name, type: block.type });
       }
-
-      changed.push(entry);
     }
+    // 캐시는 항상 업데이트 (IGNORED-only 변경도 포함)
     cache.hashCache.set(name, { type: block.type, hash: block.hash });
     cache.dataCache.set(name, block.json);
   }
