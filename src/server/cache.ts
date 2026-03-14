@@ -2,7 +2,13 @@ import * as config from './config';
 import type { BlockType } from '../shared/blockTypes';
 import type { BlockChange, ChangeLogEntry, ChangesResponse, ManifestResponse } from '../shared/types';
 
-/** Hash cache (항상 메모리에 유지, 용량 무시 가능) */
+/**
+ * 블록 해시 캐시 — 블록 내용 변경 감지용.
+ * 바이너리에 실제 데이터가 포함된 블록만 등록됨.
+ * RisuAI incremental save 특성상 대부분 root 블록만 포함되며,
+ * 캐릭터 블록은 해당 캐릭터 수정 시에만 간헐적으로 등장.
+ * 캐릭터 목록(추가/삭제) 감지에는 사용 불가 → diffDirectory() 참조.
+ */
 export interface HashEntry {
   type: BlockType;
   hash: string;
@@ -119,11 +125,19 @@ export function getManifest(): ManifestResponse {
   for (const [name, { type, hash }] of hashCache) {
     blocks.push({ name, type, hash });
   }
+  let directory: string[] = [];
+  const rootJson = dataCache.get('root');
+  if (rootJson) {
+    try {
+      directory = JSON.parse(rootJson).__directory || [];
+    } catch {}
+  }
+
   return {
     epoch,
     version: currentVersion,
     cacheInitialized,
     blocks,
-    directory: [...hashCache.keys()].filter(k => k !== 'root'),
+    directory,
   };
 }

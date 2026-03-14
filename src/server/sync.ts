@@ -71,6 +71,47 @@ function diffRootKeys(oldJson: string | null, newJson: string): DiffRootResult |
   }
 }
 
+/** ROOT 블록의 __directory(캐릭터 블록 목록) 변화를 감지 */
+interface DirDiffResult {
+  added: string[];
+  deleted: string[];
+}
+
+/**
+ * ROOT 블록의 __directory(캐릭터 블록 목록) 변화를 감지.
+ * incremental save에서는 캐릭터 데이터 블록이 바이너리에 포함되지 않으므로,
+ * __directory 비교가 캐릭터 추가/삭제의 유일한 감지 수단.
+ *
+ * @param excludeBlocks 현재 바이너리에 포함된 블록 이름 (블록 루프에서 이미 처리됨 → 중복 방지)
+ */
+function diffDirectory(
+  oldRootJson: string | null,
+  newRootJson: string,
+  excludeBlocks: ReadonlySet<string>,
+): DirDiffResult | null {
+  if (!oldRootJson) return null;
+  try {
+    const oldDir = new Set<string>(JSON.parse(oldRootJson).__directory || []);
+    const newDir: string[] = JSON.parse(newRootJson).__directory || [];
+    const newDirSet = new Set(newDir);
+    const added: string[] = [];
+    const deleted: string[] = [];
+    for (const entry of newDir) {
+      if (!oldDir.has(entry) && !excludeBlocks.has(entry)) {
+        added.push(entry);
+      }
+    }
+    for (const entry of oldDir) {
+      if (!newDirSet.has(entry)) {
+        deleted.push(entry);
+      }
+    }
+    return { added, deleted };
+  } catch {
+    return null;
+  }
+}
+
 /** DB write 처리: 파싱 → 해시 비교 → broadcast */
 export function processDbWrite(buffer: Buffer, senderClientId: string | null): void {
   const parsed = parseRisuSaveBlocks(buffer);
@@ -104,7 +145,25 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
     } else if (cached.hash !== block.hash) {
       // ROOT 블록: 3분류 필터링
       if (block.type === BLOCK_TYPE.ROOT) {
-        const diff = diffRootKeys(cache.dataCache.get(name), block.json);
+        const oldJson = cache.dataCache.get(name);
+        const diff = diffRootKeys(oldJson, block.json);
+
+        // hashCache에는 바이너리에 포함된 블록만 등록되므로,
+        // incremental save 시 캐릭터 추가/삭제를 감지하지 못함.
+        // __directory 비교로 보완.
+        const blockNames = new Set(blocks.keys());
+        const dirDiff = diffDirectory(oldJson, block.json, blockNames);
+        if (dirDiff) {
+          for (const entry of dirDiff.added) {
+            added.push({ name: entry, type: BLOCK_TYPE.WITHOUT_CHAT });
+          }
+          for (const entry of dirDiff.deleted) {
+            deleted.push(entry);
+            cache.hashCache.delete(entry);
+            cache.dataCache.delete(entry);
+          }
+        }
+
         if (diff && diff.ignoredOnly) {
           // IGNORED 키만 변경 → broadcast 안 함 (echo loop 차단)
           // 캐시는 업데이트 (아래에서)
@@ -127,17 +186,6 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
     // 캐시는 항상 업데이트 (IGNORED-only 변경도 포함)
     cache.hashCache.set(name, { type: block.type, hash: block.hash });
     cache.dataCache.set(name, block.json);
-  }
-
-  // 디렉토리 비교로 삭제 감지
-  const newDirSet = new Set(directory);
-  for (const name of cache.hashCache.keys()) {
-    if (name === 'root') continue;
-    if (!newDirSet.has(name)) {
-      deleted.push(name);
-      cache.hashCache.delete(name);
-      cache.dataCache.delete(name);
-    }
   }
 
   if (changed.length === 0 && added.length === 0 && deleted.length === 0) {
