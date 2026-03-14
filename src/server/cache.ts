@@ -61,13 +61,8 @@ export const dataCache = new SizedCache(config.MAX_CACHE_SIZE);
 
 /** 내부 상태 */
 export const epoch = Date.now();
-export let cachedDirectory: string[] = [];
 export let cacheInitialized = false;
 export let currentVersion = 0;
-
-export function setCachedDirectory(v: string[]): void {
-  cachedDirectory = v;
-}
 
 export function setCacheInitialized(v: boolean): void {
   cacheInitialized = v;
@@ -129,6 +124,6 @@ export function getManifest(): ManifestResponse {
     version: currentVersion,
     cacheInitialized,
     blocks,
-    directory: cachedDirectory,
+    directory: [...hashCache.keys()].filter(k => k !== 'root'),
   };
 }

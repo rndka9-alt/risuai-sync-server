@@ -88,7 +88,6 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
       cache.hashCache.set(name, { type: block.type, hash: block.hash });
       cache.dataCache.set(name, block.json);
     }
-    cache.setCachedDirectory(directory);
     cache.setCacheInitialized(true);
     console.log(`[Sync] Cache initialized with ${blocks.size} blocks`);
     return;
@@ -132,15 +131,14 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
 
   // 디렉토리 비교로 삭제 감지
   const newDirSet = new Set(directory);
-  for (const name of cache.cachedDirectory) {
+  for (const name of cache.hashCache.keys()) {
+    if (name === 'root') continue;
     if (!newDirSet.has(name)) {
       deleted.push(name);
       cache.hashCache.delete(name);
       cache.dataCache.delete(name);
     }
   }
-
-  cache.setCachedDirectory(directory);
 
   if (changed.length === 0 && added.length === 0 && deleted.length === 0) {
     return;
