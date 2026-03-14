@@ -5,11 +5,11 @@ import { state } from './state';
 import type { StreamState } from './state';
 import { showNotification } from './notification';
 
-// ---------------------------------------------------------------------------
-// Plugin API가 실제로 DB에 쓸 수 있는 키 (RisuAI allowedDbKeys 미러)
-// __pluginApis__.getDatabase()의 Proxy가 이 목록에 없는 키는
-// pluginCustomStorage로 리다이렉트하므로 실제 DB에 반영되지 않음
-// ---------------------------------------------------------------------------
+/**
+ * Plugin API가 실제로 DB에 쓸 수 있는 키 (RisuAI allowedDbKeys 미러).
+ * __pluginApis__.getDatabase()의 Proxy가 이 목록에 없는 키는
+ * pluginCustomStorage로 리다이렉트하므로 실제 DB에 반영되지 않음
+ */
 const PLUGIN_WRITABLE_KEYS: ReadonlySet<string> = new Set([
   'characters', 'modules', 'enabledModules', 'moduleIntergration',
   'pluginV2', 'personas', 'plugins', 'pluginCustomStorage',
@@ -20,9 +20,7 @@ const PLUGIN_WRITABLE_KEYS: ReadonlySet<string> = new Set([
   'characterOrder',
 ]);
 
-// ---------------------------------------------------------------------------
-// RisuAI 플러그인 API 타입
-// ---------------------------------------------------------------------------
+/** RisuAI 플러그인 API 타입 */
 interface RisuCharacter {
   chaId: string;
   [key: string]: unknown;
@@ -39,9 +37,7 @@ interface PluginApis {
 
 declare var __pluginApis__: PluginApis | undefined;
 
-// ---------------------------------------------------------------------------
-// Catch-up: 놓친 변경분 복구
-// ---------------------------------------------------------------------------
+/** Catch-up: 놓친 변경분 복구 */
 export function catchUpFromServer(): void {
   fetch('/sync/changes?since=' + state.lastVersion + '&clientId=' + encodeURIComponent(CLIENT_ID))
     .then((r) => {
@@ -99,10 +95,10 @@ export function catchUpFromServer(): void {
     .catch(() => {});
 }
 
-// ---------------------------------------------------------------------------
-// ROOT 블록이 live-apply 가능한지 확인
-// changedKeys가 모두 SYNCED이고 unknown 키 없음 → safe
-// ---------------------------------------------------------------------------
+/**
+ * ROOT 블록이 live-apply 가능한지 확인.
+ * changedKeys가 모두 SYNCED이고 unknown 키 없음 → safe
+ */
 function isRootSafeChange(block: BlockChange): boolean {
   if (!block.changedKeys || !Array.isArray(block.changedKeys)) return false;
   if (block.changedKeys.length === 0) return false;
@@ -110,9 +106,7 @@ function isRootSafeChange(block: BlockChange): boolean {
   return block.changedKeys.every(isSyncedRootKey);
 }
 
-// ---------------------------------------------------------------------------
-// ROOT safe key 라이브 적용
-// ---------------------------------------------------------------------------
+/** ROOT safe key 라이브 적용 */
 function applyRootSafeKeys(db: RisuDatabase, rootData: Record<string, unknown>, keys: string[]): void {
   for (const key of keys) {
     if (rootData[key] !== undefined) {
@@ -121,15 +115,11 @@ function applyRootSafeKeys(db: RisuDatabase, rootData: Record<string, unknown>, 
   }
 }
 
-// ---------------------------------------------------------------------------
-// fetch 결과 타입
-// ---------------------------------------------------------------------------
+/** fetch 결과 타입 */
 type CharFetchResult = { type: 'char'; name: string; block: BlockChange; data: RisuCharacter | null };
 type RootFetchResult = { type: 'root'; name: string; block: BlockChange; data: Record<string, unknown> | null };
 
-// ---------------------------------------------------------------------------
-// 블록 단위 동기화 핸들러
-// ---------------------------------------------------------------------------
+/** 블록 단위 동기화 핸들러 */
 export function handleBlocksChanged(msg: BlocksChangedMessage): void {
   // 캐릭터 추가/삭제 → 새로고침 (목록 갱신, 대용량 카드 등 고려)
   if ((msg.added && msg.added.length) || (msg.deleted && msg.deleted.length)) {
@@ -227,9 +217,7 @@ export function handleBlocksChanged(msg: BlocksChangedMessage): void {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Stream sync: apply streaming text from other devices
-// ---------------------------------------------------------------------------
+/** Stream sync: 다른 기기의 스트리밍 텍스트를 적용한다 */
 
 function resolveStreamTarget(streamState: StreamState, db: RisuDatabase): boolean {
   if (streamState.resolved) return true;

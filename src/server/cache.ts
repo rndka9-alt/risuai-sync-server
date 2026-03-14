@@ -2,9 +2,7 @@ import * as config from './config';
 import type { BlockType } from '../shared/blockTypes';
 import type { BlockChange, ChangeLogEntry, ChangesResponse, ManifestResponse } from '../shared/types';
 
-// ---------------------------------------------------------------------------
-// Hash cache (항상 메모리에 유지, 용량 무시 가능)
-// ---------------------------------------------------------------------------
+/** Hash cache (항상 메모리에 유지, 용량 무시 가능) */
 export interface HashEntry {
   type: BlockType;
   hash: string;
@@ -12,9 +10,7 @@ export interface HashEntry {
 
 export const hashCache = new Map<string, HashEntry>();
 
-// ---------------------------------------------------------------------------
-// Data cache (LRU eviction, 용량 제한)
-// ---------------------------------------------------------------------------
+/** Data cache (LRU eviction, 용량 제한) */
 class SizedCache {
   private maxSize: number;
   private cache = new Map<string, { data: string; size: number }>();
@@ -63,9 +59,7 @@ class SizedCache {
 
 export const dataCache = new SizedCache(config.MAX_CACHE_SIZE);
 
-// ---------------------------------------------------------------------------
-// 내부 상태
-// ---------------------------------------------------------------------------
+/** 내부 상태 */
 export const epoch = Date.now();
 export let cachedDirectory: string[] = [];
 export let cacheInitialized = false;
@@ -81,9 +75,7 @@ export function setCacheInitialized(v: boolean): void {
 
 const changeLog: ChangeLogEntry[] = [];
 
-// ---------------------------------------------------------------------------
-// 변경 로그
-// ---------------------------------------------------------------------------
+/** 변경 로그 */
 export function addChangeLogEntry(
   changed: BlockChange[],
   deleted: string[],

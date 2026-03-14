@@ -1,7 +1,7 @@
-// ---------------------------------------------------------------------------
-// 런타임 설정 — 서버가 번들 앞에 주입하는 __SYNC_CONFIG__ 에서 읽음
-// @see ../server/client-bundle.ts
-// ---------------------------------------------------------------------------
+/**
+ * 런타임 설정 — 서버가 번들 앞에 주입하는 __SYNC_CONFIG__ 에서 읽음
+ * @see ../server/client-bundle.ts
+ */
 interface SyncConfig {
   SYNC_TOKEN: string;
   DB_PATH: string;

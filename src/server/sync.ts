@@ -13,9 +13,7 @@ export function init(clientsMap: Map<string, WebSocket>): void {
   clients = clientsMap;
 }
 
-// ---------------------------------------------------------------------------
-// DB write 감지
-// ---------------------------------------------------------------------------
+/** DB write 감지 */
 function hexDecode(hex: string): string {
   let s = '';
   for (let i = 0; i < hex.length; i += 2) {
@@ -35,9 +33,7 @@ export function isDbWrite(req: IncomingMessage): boolean {
   }
 }
 
-// ---------------------------------------------------------------------------
-// ROOT 블록 키 비교: 3분류 (SYNCED / IGNORED / unknown)
-// ---------------------------------------------------------------------------
+/** ROOT 블록 키 비교: 3분류 (SYNCED / IGNORED / unknown) */
 interface DiffRootResult {
   syncedKeys: string[];   // SYNCED_ROOT_KEYS에 있는 변경 키
   unknownKeys: string[];  // 어디에도 없는 키 → reload 유도
@@ -75,9 +71,7 @@ function diffRootKeys(oldJson: string | null, newJson: string): DiffRootResult |
   }
 }
 
-// ---------------------------------------------------------------------------
-// DB write 처리: 파싱 → 해시 비교 → broadcast
-// ---------------------------------------------------------------------------
+/** DB write 처리: 파싱 → 해시 비교 → broadcast */
 export function processDbWrite(buffer: Buffer, senderClientId: string | null): void {
   const parsed = parseRisuSaveBlocks(buffer);
   if (!parsed) {
@@ -174,9 +168,7 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
   }
 }
 
-// ---------------------------------------------------------------------------
-// Broadcast
-// ---------------------------------------------------------------------------
+/** Broadcast */
 function broadcast(payload: ServerMessage, excludeClientId: string | null): void {
   const data = JSON.stringify(payload);
   for (const [id, client] of clients!) {
@@ -193,9 +185,7 @@ export function broadcastDbChanged(excludeClientId: string | null): void {
   );
 }
 
-// ---------------------------------------------------------------------------
-// SSE Stream Parsing & Broadcasting
-// ---------------------------------------------------------------------------
+/** SSE Stream Parsing & Broadcasting */
 interface ActiveStream {
   id: string;
   senderClientId: string;
@@ -208,9 +198,7 @@ interface ActiveStream {
 const activeStreams = new Map<string, ActiveStream>();
 const STREAM_BROADCAST_INTERVAL_MS = 50;
 
-// ---------------------------------------------------------------------------
-// Streaming Protection: proxy2 & write drop 판정
-// ---------------------------------------------------------------------------
+/** Streaming Protection: proxy2 & write drop 판정 */
 export function findActiveStreamForChar(targetCharId: string | null): ActiveStream | null {
   if (!targetCharId) return null;
   for (const stream of activeStreams.values()) {

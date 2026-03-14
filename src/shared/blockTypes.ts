@@ -1,13 +1,13 @@
-// ---------------------------------------------------------------------------
-// RisuSave 블록 타입 상수 & 동기화 상수
-// 서버 + 클라이언트 공통 모듈
-// ---------------------------------------------------------------------------
-// 0: CONFIG       – 설정 데이터
-// 1: ROOT         – 최상위 DB 블록 (__directory, enabledModules 등)
-// 2: WITH_CHAT    – 캐릭터 카드 (채팅 포함)
-// 6: REMOTE       – 원격 블록 (Phase 1 fallback 대상)
-// 7: WITHOUT_CHAT – 캐릭터 카드 (채팅 미포함)
-// ---------------------------------------------------------------------------
+/**
+ * RisuSave 블록 타입 상수 & 동기화 상수.
+ * 서버 + 클라이언트 공통 모듈.
+ *
+ * - 0: CONFIG       – 설정 데이터
+ * - 1: ROOT         – 최상위 DB 블록 (__directory, enabledModules 등)
+ * - 2: WITH_CHAT    – 캐릭터 카드 (채팅 포함)
+ * - 6: REMOTE       – 원격 블록 (Phase 1 fallback 대상)
+ * - 7: WITHOUT_CHAT – 캐릭터 카드 (채팅 미포함)
+ */
 export const BLOCK_TYPE = {
   CONFIG: 0,
   ROOT: 1,
@@ -24,12 +24,12 @@ export function isBlockType(value: number): value is BlockType {
   return BLOCK_TYPE_VALUES.has(value);
 }
 
-// ---------------------------------------------------------------------------
-// ROOT 키 3분류:
-//   SYNCED  – broadcast O, 클라이언트 live-apply (팝업 없음)
-//   IGNORED – broadcast X (echo loop 차단)
-//   미분류  – broadcast O, 클라이언트 reload 팝업 (신규 키 안전장치)
-// ---------------------------------------------------------------------------
+/**
+ * ROOT 키 3분류:
+ * - SYNCED  – broadcast O, 클라이언트 live-apply (팝업 없음)
+ * - IGNORED – broadcast X (echo loop 차단)
+ * - 미분류  – broadcast O, 클라이언트 reload 팝업 (신규 키 안전장치)
+ */
 
 /** 동기화 대상 ROOT 키 (allow-list). 변경 시 broadcast → 클라이언트 live-apply */
 export const SYNCED_ROOT_KEYS: ReadonlySet<string> = new Set([

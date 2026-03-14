@@ -4,9 +4,7 @@ import { catchUpFromServer, handleBlocksChanged, handleStreamStart, handleStream
 import { showNotification } from './notification';
 import type { ServerMessage, ChangesResponse } from '../shared/types';
 
-// ---------------------------------------------------------------------------
-// WebSocket 연결
-// ---------------------------------------------------------------------------
+/** WebSocket 연결 */
 export function connect(): void {
   if (state.reconnectTimer) {
     clearTimeout(state.reconnectTimer);
@@ -99,9 +97,7 @@ function scheduleReconnect(): void {
   state.reconnectDelay = Math.min(state.reconnectDelay * 2, MAX_RECONNECT_DELAY);
 }
 
-// ---------------------------------------------------------------------------
-// visibilitychange: 탭 복귀 시 catch-up
-// ---------------------------------------------------------------------------
+/** visibilitychange: 탭 복귀 시 catch-up */
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.lastVersion > 0) {
     catchUpFromServer();

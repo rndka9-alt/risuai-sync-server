@@ -2,9 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
-// ---------------------------------------------------------------------------
-// .env 파서 (dotenv 의존성 없음)
-// ---------------------------------------------------------------------------
+/** .env 파서 (dotenv 의존성 없음) */
 function loadEnvFile(filePath: string): void {
   try {
     const content = fs.readFileSync(filePath, 'utf-8');

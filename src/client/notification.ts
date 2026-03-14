@@ -1,8 +1,6 @@
 import { state } from './state';
 
-// ---------------------------------------------------------------------------
-// 알림 UI
-// ---------------------------------------------------------------------------
+/** 알림 UI */
 export function showNotification(): void {
   if (state.notificationEl) {
     resetDismissTimer();

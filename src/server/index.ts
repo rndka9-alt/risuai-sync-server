@@ -9,9 +9,7 @@ import * as sync from './sync';
 import { buildClientJs } from './client-bundle';
 import type { ClientMessage, HealthResponse } from '../shared/types';
 
-// ---------------------------------------------------------------------------
-// WebSocket
-// ---------------------------------------------------------------------------
+/** WebSocket 연결 관리 */
 const clients = new Map<string, WebSocket>();
 const aliveState = new WeakMap<WebSocket, boolean>();
 const wss = new WebSocketServer({ noServer: true });
@@ -74,9 +72,7 @@ const heartbeatInterval = setInterval(() => {
 
 wss.on('close', () => clearInterval(heartbeatInterval));
 
-// ---------------------------------------------------------------------------
-// HTTP 유틸
-// ---------------------------------------------------------------------------
+/** HTTP 유틸 */
 function sendJson(res: http.ServerResponse, statusCode: number, data: object): void {
   const body = JSON.stringify(data);
   res.writeHead(statusCode, {
@@ -164,9 +160,7 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
   });
 }
 
-// ---------------------------------------------------------------------------
-// proxy2 스트리밍 프록시
-// ---------------------------------------------------------------------------
+/** proxy2 스트리밍 프록시 */
 function isProxy2Post(req: http.IncomingMessage): boolean {
   return req.method === 'POST' && (req.url === '/proxy2' || req.url?.startsWith('/proxy2?') === true);
 }
@@ -253,9 +247,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
   });
 }
 
-// ---------------------------------------------------------------------------
-// HTTP 서버
-// ---------------------------------------------------------------------------
+/** HTTP 서버 */
 const server = http.createServer((req, res) => {
   // --- /sync/* 경로 ---
   if (req.url!.startsWith('/sync/')) {
@@ -373,9 +365,7 @@ const server = http.createServer((req, res) => {
   proxyRequest(req, res);
 });
 
-// ---------------------------------------------------------------------------
-// WebSocket upgrade
-// ---------------------------------------------------------------------------
+/** WebSocket upgrade */
 server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
   const url = new URL(req.url!, `http://${req.headers.host}`);
 
@@ -416,9 +406,7 @@ server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) =
   proxyReq.end();
 });
 
-// ---------------------------------------------------------------------------
-// 서버 시작
-// ---------------------------------------------------------------------------
+/** 서버 시작 */
 server.listen(config.PORT, () => {
   console.log(`[Sync] Server listening on port ${config.PORT}`);
   console.log(`[Sync] Upstream: ${config.UPSTREAM.href}`);

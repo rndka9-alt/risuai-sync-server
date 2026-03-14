@@ -2,9 +2,7 @@ import { DB_PATH, CLIENT_ID } from './config';
 import { state } from './state';
 import type { StreamState } from './state';
 
-// ---------------------------------------------------------------------------
-// fetch monkey-patch
-// ---------------------------------------------------------------------------
+/** fetch monkey-patch */
 const originalFetch = window.fetch;
 
 interface RisuCharacterLike {

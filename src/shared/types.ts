@@ -1,16 +1,12 @@
 import type { BlockType } from './blockTypes';
 
-// ---------------------------------------------------------------------------
-// 공통 base: 서버 재시작 감지용 epoch + 단조증가 version
-// ---------------------------------------------------------------------------
+/** 공통 base: 서버 재시작 감지용 epoch + 단조증가 version */
 export interface Versioned {
   epoch: number;
   version: number;
 }
 
-// ---------------------------------------------------------------------------
-// 블록 변경 엔트리 (서버 broadcast + 클라이언트 수신 공통)
-// ---------------------------------------------------------------------------
+/** 블록 변경 엔트리 (서버 broadcast + 클라이언트 수신 공통) */
 export interface BlockChange {
   name: string;
   type: BlockType;
@@ -19,9 +15,7 @@ export interface BlockChange {
   hasUnknownKeys?: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// WebSocket 메시지: 서버 → 클라이언트
-// ---------------------------------------------------------------------------
+/** WebSocket 메시지: 서버 → 클라이언트 */
 export type ServerMessage =
   | BlocksChangedMessage
   | VersionUpdateMessage
@@ -69,9 +63,7 @@ export interface StreamEndMessage {
   timestamp: number;
 }
 
-// ---------------------------------------------------------------------------
-// WebSocket 메시지: 클라이언트 → 서버
-// ---------------------------------------------------------------------------
+/** WebSocket 메시지: 클라이언트 → 서버 */
 export type ClientMessage =
   | WriteNotifyMessage;
 
@@ -80,9 +72,7 @@ export interface WriteNotifyMessage {
   file: string;
 }
 
-// ---------------------------------------------------------------------------
-// HTTP API 응답
-// ---------------------------------------------------------------------------
+/** HTTP API 응답 */
 export interface ChangeLogEntry {
   version: number;
   timestamp: number;
