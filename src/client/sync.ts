@@ -6,6 +6,21 @@ import type { StreamState } from './state';
 import { showNotification } from './notification';
 
 // ---------------------------------------------------------------------------
+// Plugin API가 실제로 DB에 쓸 수 있는 키 (RisuAI allowedDbKeys 미러)
+// __pluginApis__.getDatabase()의 Proxy가 이 목록에 없는 키는
+// pluginCustomStorage로 리다이렉트하므로 실제 DB에 반영되지 않음
+// ---------------------------------------------------------------------------
+const PLUGIN_WRITABLE_KEYS: ReadonlySet<string> = new Set([
+  'characters', 'modules', 'enabledModules', 'moduleIntergration',
+  'pluginV2', 'personas', 'plugins', 'pluginCustomStorage',
+  'temperature', 'askRemoval', 'maxContext', 'maxResponse',
+  'frequencyPenalty', 'PresensePenalty', 'theme', 'textTheme',
+  'lineHeight', 'seperateModelsForAxModels', 'seperateModels',
+  'customCSS', 'guiHTML', 'colorSchemeName', 'selectedPersona',
+  'characterOrder',
+]);
+
+// ---------------------------------------------------------------------------
 // RisuAI 플러그인 API 타입
 // ---------------------------------------------------------------------------
 interface RisuCharacter {
@@ -148,7 +163,11 @@ export function handleBlocksChanged(msg: BlocksChangedMessage): void {
     if (b.type === BLOCK_TYPE.CONFIG) return;
     if (b.type === BLOCK_TYPE.WITH_CHAT || b.type === BLOCK_TYPE.WITHOUT_CHAT) return;
     if (b.type === BLOCK_TYPE.ROOT && isRootSafeChange(b)) {
-      safeRootBlocks.push(b);
+      if (b.changedKeys!.every((k) => PLUGIN_WRITABLE_KEYS.has(k))) {
+        safeRootBlocks.push(b);
+      } else {
+        needsReload = true;
+      }
       return;
     }
     // 그 외 (unsafe ROOT, BOTPRESET, MODULES 등) → reload
