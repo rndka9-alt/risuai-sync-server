@@ -150,7 +150,7 @@ export function handleBlocksChanged(msg: BlocksChangedMessage): void {
   const safeRootBlocks: BlockChange[] = [];
 
   (msg.changed || []).forEach((b) => {
-    if (b.type === BLOCK_TYPE.CONFIG) return;
+    if (b.type === BLOCK_TYPE.CONFIG || b.type === BLOCK_TYPE.BOTPRESET || b.type === BLOCK_TYPE.MODULES) return;
     if (b.type === BLOCK_TYPE.WITH_CHAT || b.type === BLOCK_TYPE.WITHOUT_CHAT) return;
     if (b.type === BLOCK_TYPE.ROOT && isRootSafeChange(b)) {
       if (b.changedKeys!.every((k) => PLUGIN_WRITABLE_KEYS.has(k))) {
