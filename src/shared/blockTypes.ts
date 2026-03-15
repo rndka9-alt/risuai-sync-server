@@ -2,18 +2,27 @@
  * RisuSave 블록 타입 상수 & 동기화 상수.
  * 서버 + 클라이언트 공통 모듈.
  *
- * - 0: CONFIG       – 설정 데이터
- * - 1: ROOT         – 최상위 DB 블록 (__directory, enabledModules 등)
- * - 2: WITH_CHAT    – 캐릭터 카드 (채팅 포함)
- * - 6: REMOTE       – 원격 블록 (Phase 1 fallback 대상)
- * - 7: WITHOUT_CHAT – 캐릭터 카드 (채팅 미포함)
+ * RisuAI의 RisuSaveType enum과 동기화 필요:
+ * - 0: CONFIG          – 설정 데이터
+ * - 1: ROOT            – 최상위 DB 블록 (__directory, enabledModules 등)
+ * - 2: WITH_CHAT       – 캐릭터 카드 (채팅 포함)
+ * - 3: CHAT            – 채팅 (미사용)
+ * - 4: BOTPRESET       – 봇 프리셋
+ * - 5: MODULES         – 모듈
+ * - 6: REMOTE          – 원격 블록 (메타데이터만)
+ * - 7: WITHOUT_CHAT    – 캐릭터 카드 (채팅 미포함)
+ * - 8: ROOT_COMPONENT  – ROOT 분할 컴포넌트
  */
 export const BLOCK_TYPE = {
   CONFIG: 0,
   ROOT: 1,
   WITH_CHAT: 2,
+  CHAT: 3,
+  BOTPRESET: 4,
+  MODULES: 5,
   REMOTE: 6,
   WITHOUT_CHAT: 7,
+  ROOT_COMPONENT: 8,
 } as const;
 
 export type BlockType = (typeof BLOCK_TYPE)[keyof typeof BLOCK_TYPE];
