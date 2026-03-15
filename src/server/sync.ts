@@ -1,5 +1,6 @@
 import type { IncomingMessage } from 'http';
 import type WebSocket from 'ws';
+import crypto from 'crypto';
 import { parseRisuSaveBlocks } from './parser';
 import { BLOCK_TYPE, isSyncedRootKey, isIgnoredRootKey } from '../shared/blockTypes';
 import type { BlockChange, ServerMessage, StreamStartMessage, StreamDataMessage, StreamEndMessage } from '../shared/types';
@@ -30,6 +31,31 @@ export function isDbWrite(req: IncomingMessage): boolean {
     return hexDecode(fp) === config.DB_PATH;
   } catch {
     return false;
+  }
+}
+
+/** Remote block write 감지 (Node 서버 모드: remotes/{charId}.local.bin) */
+const REMOTE_FILE_RE = /^remotes\/(.+)\.local\.bin$/;
+
+export function isRemoteBlockWrite(req: IncomingMessage): boolean {
+  if (req.method !== 'POST' || req.url !== '/api/write') return false;
+  const fp = req.headers['file-path'];
+  if (!fp || typeof fp !== 'string') return false;
+  try {
+    return REMOTE_FILE_RE.test(hexDecode(fp));
+  } catch {
+    return false;
+  }
+}
+
+export function extractCharIdFromFilePath(req: IncomingMessage): string | null {
+  const fp = req.headers['file-path'];
+  if (!fp || typeof fp !== 'string') return null;
+  try {
+    const match = hexDecode(fp).match(REMOTE_FILE_RE);
+    return match ? match[1] : null;
+  } catch {
+    return null;
   }
 }
 
@@ -112,12 +138,67 @@ function diffDirectory(
   }
 }
 
+/** Remote block write 처리: 해시 비교 → broadcast (Node 서버 모드) */
+export function processRemoteBlockWrite(
+  buffer: Buffer,
+  charId: string,
+  senderClientId: string | null,
+): void {
+  const hash = crypto.createHash('sha256').update(buffer).digest('hex');
+  const jsonStr = buffer.toString('utf-8');
+
+  try {
+    JSON.parse(jsonStr);
+  } catch {
+    console.error(`[Sync] Remote block "${charId}" is not valid JSON, skipping`);
+    return;
+  }
+
+  if (!cache.cacheInitialized) {
+    // database.bin 이전에 도착한 경우: 캐시만 채움
+    cache.hashCache.set(charId, { type: BLOCK_TYPE.WITH_CHAT, hash });
+    cache.dataCache.set(charId, jsonStr);
+    console.log(`[Sync] Remote block cached (pre-init): ${charId}`);
+    return;
+  }
+
+  const cached = cache.hashCache.get(charId);
+  if (cached && cached.hash === hash) {
+    return;
+  }
+
+  cache.hashCache.set(charId, { type: BLOCK_TYPE.WITH_CHAT, hash });
+  cache.dataCache.set(charId, jsonStr);
+
+  const blockChange: BlockChange = { name: charId, type: BLOCK_TYPE.WITH_CHAT };
+  const isNew = !cached;
+  const changed: BlockChange[] = isNew ? [] : [blockChange];
+  const added: BlockChange[] = isNew ? [blockChange] : [];
+
+  const version = cache.addChangeLogEntry(changed.concat(added), [], senderClientId);
+
+  console.log(`[Sync] v${version}: remote block ${isNew ? 'added' : 'changed'}: ${charId} (sender: ${senderClientId || 'unknown'})`);
+
+  broadcast(
+    { type: 'blocks-changed', epoch: cache.epoch, version, changed, added, deleted: [], timestamp: Date.now() },
+    senderClientId,
+  );
+
+  if (senderClientId && clients!.has(senderClientId)) {
+    const senderWs = clients!.get(senderClientId)!;
+    if (senderWs.readyState === 1) {
+      senderWs.send(JSON.stringify({ type: 'version-update', epoch: cache.epoch, version } satisfies ServerMessage));
+    }
+  }
+}
+
 /** DB write 처리: 파싱 → 해시 비교 → broadcast */
 export function processDbWrite(buffer: Buffer, senderClientId: string | null): void {
   const parsed = parseRisuSaveBlocks(buffer);
   if (!parsed) {
-    // REMOTE 블록 또는 파싱 실패 → Phase 1 fallback
-    broadcastDbChanged(senderClientId);
+    // REMOTE 블록 또는 파싱 실패.
+    // Node 서버 모드에서는 캐릭터 데이터가 processRemoteBlockWrite로 처리되므로 skip.
+    console.log(`[Sync] DB write contains REMOTE blocks or failed to parse, skipping`);
     return;
   }
 

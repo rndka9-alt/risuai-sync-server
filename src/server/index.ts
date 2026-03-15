@@ -160,6 +160,63 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
   });
 }
 
+/** Remote block write 프록시 (Node 서버 모드: remotes/{charId}.local.bin) */
+function proxyRemoteBlockWrite(req: http.IncomingMessage, res: http.ServerResponse): void {
+  const rawClientId = req.headers['x-sync-client-id'];
+  const senderClientId = typeof rawClientId === 'string' ? rawClientId : null;
+  const charId = sync.extractCharIdFromFilePath(req);
+
+  const chunks: Buffer[] = [];
+  req.on('data', (chunk: Buffer) => chunks.push(chunk));
+  req.on('end', () => {
+    const buffer = Buffer.concat(chunks);
+
+    if (sync.isWriteBlockedByStream(senderClientId)) {
+      console.log(`[Sync] Remote write blocked: ${senderClientId || 'unknown'} (streaming in progress)`);
+      sendJson(res, 409, { error: 'streaming_in_progress', message: 'Write blocked: streaming in progress' });
+      return;
+    }
+
+    const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: config.UPSTREAM.host };
+    delete headers['x-sync-client-id'];
+
+    const proxyReq = http.request(
+      {
+        hostname: config.UPSTREAM.hostname,
+        port: config.UPSTREAM.port,
+        path: req.url,
+        method: req.method,
+        headers,
+      },
+      (proxyRes) => {
+        res.writeHead(proxyRes.statusCode!, proxyRes.headers);
+        proxyRes.pipe(res);
+
+        if (proxyRes.statusCode! >= 200 && proxyRes.statusCode! < 300 && charId) {
+          setImmediate(() => {
+            try {
+              sync.processRemoteBlockWrite(buffer, charId, senderClientId);
+            } catch (e) {
+              console.error('[Sync] Error processing remote block write:', e);
+              sync.broadcastDbChanged(senderClientId);
+            }
+          });
+        }
+      },
+    );
+
+    proxyReq.on('error', () => {
+      if (!res.headersSent) {
+        res.writeHead(502, { 'content-type': 'text/plain' });
+      }
+      res.end('Bad Gateway');
+    });
+
+    proxyReq.write(buffer);
+    proxyReq.end();
+  });
+}
+
 /** proxy2 스트리밍 프록시 */
 function isProxy2Post(req: http.IncomingMessage): boolean {
   return req.method === 'POST' && (req.url === '/proxy2' || req.url?.startsWith('/proxy2?') === true);
@@ -352,6 +409,12 @@ const server = http.createServer((req, res) => {
   // --- DB write → 버퍼링 프록시 ---
   if (sync.isDbWrite(req)) {
     proxyDbWrite(req, res);
+    return;
+  }
+
+  // --- Remote block write → 버퍼링 프록시 (Node 서버 모드) ---
+  if (sync.isRemoteBlockWrite(req)) {
+    proxyRemoteBlockWrite(req, res);
     return;
   }
 
