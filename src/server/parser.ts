@@ -33,7 +33,6 @@ export function parseRisuSaveBlocks(buffer: Buffer): ParseResult | null {
   const blocks = new Map<string, ParsedBlock>();
   let directory: string[] = [];
   let offset = MAGIC_HEADER.length;
-  let hasRemote = false;
 
   while (offset + 7 <= buffer.length) {
     try {
@@ -63,9 +62,9 @@ export function parseRisuSaveBlocks(buffer: Buffer): ParseResult | null {
       let data = buffer.slice(offset, offset + dataLen);
       offset += dataLen;
 
-      // REMOTE 블록 → Phase 1 fallback
+      // REMOTE 블록은 메타데이터만 포함 → 건너뜀
+      // (Node 서버 모드에서 캐릭터 데이터는 remotes/*.local.bin으로 별도 처리)
       if (type === BLOCK_TYPE.REMOTE) {
-        hasRemote = true;
         continue;
       }
 
@@ -99,8 +98,6 @@ export function parseRisuSaveBlocks(buffer: Buffer): ParseResult | null {
       break;
     }
   }
-
-  if (hasRemote) return null;
 
   return { blocks, directory };
 }

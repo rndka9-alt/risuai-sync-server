@@ -196,9 +196,8 @@ export function processRemoteBlockWrite(
 export function processDbWrite(buffer: Buffer, senderClientId: string | null): void {
   const parsed = parseRisuSaveBlocks(buffer);
   if (!parsed) {
-    // REMOTE 블록 또는 파싱 실패.
-    // Node 서버 모드에서는 캐릭터 데이터가 processRemoteBlockWrite로 처리되므로 skip.
-    console.log(`[Sync] DB write contains REMOTE blocks or failed to parse, skipping`);
+    // 파싱 실패 → Phase 1 fallback
+    broadcastDbChanged(senderClientId);
     return;
   }
 
