@@ -132,54 +132,13 @@ export const SYNCED_ROOT_KEYS: ReadonlySet<string> = new Set([
   'customQuotes', 'customQuotesData',
 ]);
 
-/** per-device ROOT 키 (deny-list). 변경 시 broadcast 하지 않음 */
+/**
+ * Transient ROOT 키 — 매 저장마다 변경되는 내부 상태.
+ * broadcast 하지 않으며, 클라이언트 스냅샷에서도 추적하지 않음.
+ */
 export const IGNORED_ROOT_KEYS: ReadonlySet<string> = new Set([
-  // 타임스탬프 / 내부상태
   'saveTime', 'genTime', 'formatversion', 'didFirstSetup',
   'lastPatchNoteCheckVersion', 'statics', 'account',
-
-  // UI / 레이아웃
-  'zoomsize', 'iconsize', 'fullScreen', 'textAreaSize', 'sideBarSize',
-  'textAreaTextSize', 'waifuWidth', 'waifuWidth2', 'assetWidth', 'heightMode',
-  'classicMaxWidth', 'betaMobileGUI', 'useLegacyGUI', 'menuSideBar',
-  'animationSpeed', 'roundIcons', 'settingsCloseButtonSize',
-  'hamburgerButtonBottom', 'enableScrollToActiveChar',
-
-  // 테마 / 비주얼
-  'theme', 'textTheme', 'customTextTheme', 'colorScheme', 'colorSchemeName',
-  'customBackground', 'textScreenColor', 'textScreenBorder', 'textScreenRounded',
-  'textBorder', 'customCSS', 'customGUI', 'guiHTML',
-  'font', 'customFont', 'lineHeight', 'blockquoteStyling', 'unformatQuotes',
-
-  // 로케일
-  'language',
-
-  // per-device UI 토글
-  'hotkeys', 'notification', 'showMenuChatList', 'showMenuHypaMemoryModal',
-  'sideMenuRerollButton', 'requestInfoInsideChat', 'promptInfoInsideChat',
-  'promptTextInfoInsideChat', 'showSavingIcon', 'showPromptComparison',
-  'showTranslationLoading', 'showDeprecatedTriggerV1', 'showDeprecatedTriggerV2',
-  'returnCSSError', 'hideApiKey', 'enableDevTools', 'inlayErrorResponse',
-  'hideRealm', 'showFirstMessagePages', 'showFolderName',
-  'enableBookmark', 'hideAllImages', 'autoScrollToNewMessage',
-  'alwaysScrollToNewMessage', 'newMessageButtonStyle', 'showUnrecommended',
-  'pluginDevelopMode', 'outputImageModal', 'dynamicAssetsEditDisplay',
-  'auxModelUnderModelSettings', 'sendWithEnter', 'fixedChatTextarea',
-  'clickToEdit', 'enableBlockPartialEdit', 'enableDragPartialEdit',
-  'useChatSticker', 'useAdditionalAssetsPreview', 'botSettingAtStart',
-  'showMemoryLimit', 'promptDiffPrefs', 'createFolderOnBranch',
-  'useChatCopy', 'playMessage', 'ttsAutoSpeech', 'playMessageOnTranslateEnd',
-  'goCharacterOnImport', 'bulkEnabling', 'realmDirectOpen',
-  'lightningRealmImport', 'allowAllExtentionFiles', 'newImageHandlingBeta',
-  'legacyMediaFindings', 'assetMaxDifference', 'hubServerType',
-  'autofillRequestUrl', 'checkCorruption', 'saveSignatures',
-  'echoMessage', 'echoDelay', 'NAIadventure', 'NAIappendName',
-  'dynamicModelRegistry', 'enableRisuaiProTools', 'epEnabled',
-  'seperateParametersByModel', 'disableSeperateParameterChangeOnPresetChange',
-  'toggleConfirmRecommendedPreset', 'doNotChangeSeperateModels',
-  'doNotChangeFallbackModels', 'useExperimental', 'useExperimentalGoogleTranslator',
-  'usePlainFetch', 'novellistAPI', 'elevenLabKey', 'fishSpeechKey',
-  'showFolderName', 'chatCompression',
 ]);
 
 export function isSyncedRootKey(key: string): boolean {

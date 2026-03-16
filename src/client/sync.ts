@@ -1,4 +1,4 @@
-import { BLOCK_TYPE, SYNCED_ROOT_KEYS, isSyncedRootKey } from '../shared/blockTypes';
+import { BLOCK_TYPE, SYNCED_ROOT_KEYS, IGNORED_ROOT_KEYS, isSyncedRootKey } from '../shared/blockTypes';
 import type { BlockChange, BlocksChangedMessage, ChangesResponse, ChangeLogEntry, StreamStartMessage, StreamDataMessage, StreamEndMessage } from '../shared/types';
 import { CLIENT_ID } from './config';
 import { state } from './state';
@@ -37,23 +37,30 @@ interface PluginApis {
 
 declare var __pluginApis__: PluginApis | undefined;
 
-/** 현재 DB의 synced key 값으로 스냅샷 갱신 */
+/** 스냅샷 추적 대상 키인지 판별 (transient/메타데이터/characters 제외) */
+function isTrackedKey(key: string): boolean {
+  if (key.startsWith('__')) return false;
+  if (key === 'characters') return false;
+  if (IGNORED_ROOT_KEYS.has(key)) return false;
+  return true;
+}
+
+/** 현재 DB의 추적 대상 키 값으로 스냅샷 갱신 */
 export function updateRootSnapshot(): void {
   if (typeof __pluginApis__ === 'undefined') return;
   try {
     const db = __pluginApis__.getDatabase();
     const snap: Record<string, string> = {};
-    for (const key of SYNCED_ROOT_KEYS) {
-      if ((db as Record<string, unknown>)[key] !== undefined) {
-        snap[key] = JSON.stringify((db as Record<string, unknown>)[key]);
-      }
+    for (const key of Object.keys(db)) {
+      if (!isTrackedKey(key)) continue;
+      snap[key] = JSON.stringify(db[key]);
     }
     state.rootSnapshot = snap;
   } catch { /* non-fatal */ }
 }
 
 /**
- * 스냅샷 대비 실제 변경된 synced key 목록 반환. null = 비교 불가 (서버 fallback).
+ * 스냅샷 대비 실제 변경된 키 목록 반환. null = 비교 불가 (서버 fallback).
  * 비교와 동시에 스냅샷을 현재 DB 상태로 갱신한다 (write 응답 대기 중 race condition 방지).
  */
 export function diffRootSnapshot(): string[] | null {
@@ -63,10 +70,17 @@ export function diffRootSnapshot(): string[] | null {
     const db = __pluginApis__.getDatabase();
     const changed: string[] = [];
     const newSnap: Record<string, string> = {};
-    for (const key of SYNCED_ROOT_KEYS) {
-      const cur = JSON.stringify((db as Record<string, unknown>)[key]);
+    for (const key of Object.keys(db)) {
+      if (!isTrackedKey(key)) continue;
+      const cur = JSON.stringify(db[key]);
       newSnap[key] = cur;
       if (cur !== state.rootSnapshot[key]) {
+        changed.push(key);
+      }
+    }
+    // 스냅샷에 있었지만 DB에서 사라진 키도 변경으로 감지
+    for (const key of Object.keys(state.rootSnapshot)) {
+      if (!(key in newSnap)) {
         changed.push(key);
       }
     }
