@@ -108,6 +108,8 @@ function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse): void
 function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void {
   const rawClientId = req.headers['x-sync-client-id'];
   const senderClientId = typeof rawClientId === 'string' ? rawClientId : null;
+  const rawRootChanged = req.headers['x-sync-root-changed'];
+  const clientRootChanged = typeof rawRootChanged === 'string' ? rawRootChanged : null;
   const chunks: Buffer[] = [];
   req.on('data', (chunk: Buffer) => chunks.push(chunk));
   req.on('end', () => {
@@ -122,6 +124,7 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
 
     const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: config.UPSTREAM.host };
     delete headers['x-sync-client-id'];
+    delete headers['x-sync-root-changed'];
 
     const proxyReq = http.request(
       {
@@ -138,7 +141,7 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
         if (proxyRes.statusCode! >= 200 && proxyRes.statusCode! < 300) {
           setImmediate(() => {
             try {
-              sync.processDbWrite(buffer, senderClientId);
+              sync.processDbWrite(buffer, senderClientId, clientRootChanged);
             } catch (e) {
               console.error('[Sync] Error processing DB write:', e);
               sync.broadcastDbChanged(senderClientId);
