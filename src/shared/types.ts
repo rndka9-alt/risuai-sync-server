@@ -65,7 +65,12 @@ export interface StreamEndMessage {
 
 /** WebSocket 메시지: 클라이언트 → 서버 */
 export type ClientMessage =
+  | InitMessage
   | WriteNotifyMessage;
+
+export interface InitMessage {
+  type: 'init';
+}
 
 export interface WriteNotifyMessage {
   type: 'write-notify';

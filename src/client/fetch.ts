@@ -1,7 +1,6 @@
-import { CLIENT_ID, DB_PATH } from './config';
+import { CLIENT_ID } from './config';
 import { state } from './state';
 import type { StreamState } from './state';
-import { diffRootSnapshot, updateRootSnapshot } from './sync';
 
 /** fetch monkey-patch */
 const originalFetch = window.fetch;
@@ -21,35 +20,6 @@ interface PluginApisLike {
 }
 
 declare var __pluginApis__: PluginApisLike | undefined;
-
-function getHeader(headers: HeadersInit, name: string): string | null {
-  if (headers instanceof Headers) {
-    return headers.get(name);
-  } else if (Array.isArray(headers)) {
-    const entry = headers.find(([k]) => k.toLowerCase() === name.toLowerCase());
-    return entry ? entry[1] : null;
-  } else {
-    const val = (headers as Record<string, string>)[name];
-    return typeof val === 'string' ? val : null;
-  }
-}
-
-function hexDecode(hex: string): string {
-  let s = '';
-  for (let i = 0; i < hex.length; i += 2) {
-    s += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
-  }
-  return s;
-}
-
-/** file-path 헤더가 database.bin (메인 DB)을 가리키는지 확인 */
-function isMainDbWrite(headers: HeadersInit): boolean {
-  const fp = getHeader(headers, 'file-path');
-  if (!fp) return false;
-  try {
-    return hexDecode(fp) === DB_PATH;
-  } catch { return false; }
-}
 
 function setHeader(headers: HeadersInit, name: string, value: string): void {
   if (headers instanceof Headers) {
@@ -96,18 +66,8 @@ function findStreamTarget(): string | null {
 
 const patchedFetch: typeof fetch = function (input, init) {
   // POST /api/write 시 x-sync-client-id 헤더 추가 (sender 식별용)
-  let isDbWrite = false;
   if (init && init.method === 'POST' && input === '/api/write' && init.headers) {
     setHeader(init.headers, 'x-sync-client-id', CLIENT_ID);
-
-    // 메인 DB write일 경우, 스냅샷 대비 실제 변경된 synced key만 보고
-    if (isMainDbWrite(init.headers)) {
-      isDbWrite = true;
-      const changedKeys = diffRootSnapshot();
-      if (changedKeys !== null) {
-        setHeader(init.headers, 'x-sync-root-changed', changedKeys.join(','));
-      }
-    }
   }
 
   // POST /proxy2 시 스트리밍 보호 + sync 헤더 추가
@@ -134,11 +94,6 @@ const patchedFetch: typeof fetch = function (input, init) {
   }
 
   return originalFetch.call(window, input, init!).then((response) => {
-    // 첫 write 성공 시 스냅샷 초기화 (diffRootSnapshot이 null 반환한 경우)
-    if (isDbWrite && response.ok && Object.keys(state.rootSnapshot).length === 0) {
-      updateRootSnapshot();
-    }
-
     // 서버 409 수신 시 activeStreams 복구 (새로고침 후 fallback)
     if (init?.method === 'POST' && input === '/proxy2' && response.status === 409) {
       response.clone().json().then((body: { error?: string; streamId?: string; targetCharId?: string }) => {

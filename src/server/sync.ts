@@ -10,8 +10,28 @@ import * as config from './config';
 // server/index.ts 에서 init()으로 주입
 let clients: Map<string, WebSocket> | null = null;
 
+/**
+ * Per-client ROOT 데이터 캐시 — echo 방지용.
+ * 각 클라이언트의 마지막 ROOT write를 저장하여,
+ * 글로벌 diff와의 intersection으로 사전 존재 차이를 필터링한다.
+ * disconnect 시 removeClientCache()로 정리.
+ */
+const clientRootCache = new Map<string, string>();
+
 export function init(clientsMap: Map<string, WebSocket>): void {
   clients = clientsMap;
+}
+
+export function removeClientCache(clientId: string): void {
+  clientRootCache.delete(clientId);
+}
+
+/** WS init 메시지 수신 시: 현재 글로벌 ROOT 캐시를 per-client baseline으로 복사 */
+export function initClientRootCache(clientId: string): void {
+  const rootJson = cache.dataCache.get('root');
+  if (rootJson) {
+    clientRootCache.set(clientId, rootJson);
+  }
 }
 
 /** DB write 감지 */
@@ -192,19 +212,8 @@ export function processRemoteBlockWrite(
   }
 }
 
-/** 클라이언트가 보고한 x-sync-root-changed 헤더 파싱 */
-function parseClientReportedKeys(header: string | null): string[] | null {
-  if (header === null) return null;           // 헤더 없음 → fallback
-  if (header === '') return [];               // 빈 문자열 → 변경 없음
-  return header.split(',').filter(Boolean);
-}
-
 /** DB write 처리: 파싱 → 해시 비교 → broadcast */
-export function processDbWrite(
-  buffer: Buffer,
-  senderClientId: string | null,
-  clientRootChangedHeader?: string | null,
-): void {
+export function processDbWrite(buffer: Buffer, senderClientId: string | null): void {
   const parsed = parseRisuSaveBlocks(buffer);
   if (!parsed) {
     // 파싱 실패 → Phase 1 fallback
@@ -236,13 +245,14 @@ export function processDbWrite(
     } else if (cached.hash !== block.hash) {
       // ROOT 블록: 3분류 필터링
       if (block.type === BLOCK_TYPE.ROOT) {
-        const oldJson = cache.dataCache.get(name);
+        const globalOldJson = cache.dataCache.get(name);
+        const globalDiff = diffRootKeys(globalOldJson, block.json);
 
         // hashCache에는 바이너리에 포함된 블록만 등록되므로,
         // incremental save 시 캐릭터 추가/삭제를 감지하지 못함.
         // __directory 비교로 보완. (항상 글로벌 캐시 기준)
         const blockNames = new Set(blocks.keys());
-        const dirDiff = diffDirectory(oldJson, block.json, blockNames);
+        const dirDiff = diffDirectory(globalOldJson, block.json, blockNames);
         if (dirDiff) {
           for (const entry of dirDiff.added) {
             added.push({ name: entry, type: BLOCK_TYPE.WITHOUT_CHAT });
@@ -254,36 +264,39 @@ export function processDbWrite(
           }
         }
 
-        // 클라이언트가 스냅샷 기반 실제 변경 키를 보고한 경우 → 보고 기반 처리
-        const reportedKeys = parseClientReportedKeys(clientRootChangedHeader ?? null);
-        if (reportedKeys !== null) {
-          if (reportedKeys.length > 0) {
+        // Per-client intersection diff: 글로벌 diff와 클라이언트 diff의 교집합만 broadcast.
+        // - 글로벌에만 있는 키: 사전 존재 차이 (echo) → 제외
+        // - 클라이언트에만 있는 키: sync-apply 결과 (글로벌과 이미 동일) → 제외
+        // - 양쪽 모두에 있는 키: 진짜 유저 변경 → broadcast
+        const clientOldJson = senderClientId ? clientRootCache.get(senderClientId) : undefined;
+        const clientDiff = clientOldJson ? diffRootKeys(clientOldJson, block.json) : null;
+
+        if (globalDiff && clientDiff) {
+          const clientSyncedSet = new Set(clientDiff.syncedKeys);
+          const clientUnknownSet = new Set(clientDiff.unknownKeys);
+          const effectiveSynced = globalDiff.syncedKeys.filter((k) => clientSyncedSet.has(k));
+          const effectiveUnknown = globalDiff.unknownKeys.filter((k) => clientUnknownSet.has(k));
+
+          if (effectiveSynced.length > 0 || effectiveUnknown.length > 0) {
             const entry: BlockChange = { name, type: block.type };
-            const syncedKeys = reportedKeys.filter(isSyncedRootKey);
-            const unknownKeys = reportedKeys.filter((k) => !isSyncedRootKey(k) && !isIgnoredRootKey(k));
-            entry.changedKeys = [...syncedKeys, ...unknownKeys];
-            entry.hasUnknownKeys = unknownKeys.length > 0;
+            entry.changedKeys = [...effectiveSynced, ...effectiveUnknown];
+            entry.hasUnknownKeys = effectiveUnknown.length > 0;
             changed.push(entry);
           }
-          // reportedKeys.length === 0 → 실제 변경 없음, broadcast skip (echo 방지)
-        } else {
-          // 클라이언트 보고 없음 → 기존 글로벌 diff fallback
-          const diff = diffRootKeys(oldJson, block.json);
-          if (diff && diff.ignoredOnly) {
-            // IGNORED 키만 변경 → broadcast 안 함 (echo loop 차단)
-            // 캐시는 업데이트 (아래에서)
-          } else {
+        } else if (globalDiff) {
+          // per-client 캐시 없음 (첫 write) → 글로벌 diff fallback
+          if (!globalDiff.ignoredOnly) {
             const entry: BlockChange = { name, type: block.type };
-            if (diff) {
-              entry.changedKeys = [...diff.syncedKeys, ...diff.unknownKeys];
-              entry.hasUnknownKeys = diff.unknownKeys.length > 0;
-            } else {
-              // diff 실패 (null) → 전체 reload fallback
-              entry.changedKeys = null;
-              entry.hasUnknownKeys = true;
-            }
+            entry.changedKeys = [...globalDiff.syncedKeys, ...globalDiff.unknownKeys];
+            entry.hasUnknownKeys = globalDiff.unknownKeys.length > 0;
             changed.push(entry);
           }
+        } else if (!globalDiff) {
+          // diff 실패 (null) → 전체 reload fallback
+          const entry: BlockChange = { name, type: block.type };
+          entry.changedKeys = null;
+          entry.hasUnknownKeys = true;
+          changed.push(entry);
         }
       } else {
         changed.push({ name, type: block.type });
@@ -292,6 +305,9 @@ export function processDbWrite(
     // 캐시는 항상 업데이트 (IGNORED-only 변경도 포함)
     cache.hashCache.set(name, { type: block.type, hash: block.hash });
     cache.dataCache.set(name, block.json);
+    if (block.type === BLOCK_TYPE.ROOT && senderClientId) {
+      clientRootCache.set(senderClientId, block.json);
+    }
   }
 
   if (changed.length === 0 && added.length === 0 && deleted.length === 0) {

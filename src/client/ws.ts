@@ -28,6 +28,9 @@ export function connect(): void {
     console.log('[Sync] Connected');
     state.reconnectDelay = 1000;
 
+    // per-client ROOT 캐시 초기화 요청 (echo 방지 baseline)
+    state.ws!.send(JSON.stringify({ type: 'init' }));
+
     if (state.isFirstConnect) {
       // 첫 연결: 현재 버전 + epoch 가져옴
       fetch('/sync/changes?since=0&clientId=' + encodeURIComponent(CLIENT_ID))

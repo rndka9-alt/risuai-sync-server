@@ -1,4 +1,4 @@
-import { BLOCK_TYPE, SYNCED_ROOT_KEYS, IGNORED_ROOT_KEYS, isSyncedRootKey } from '../shared/blockTypes';
+import { BLOCK_TYPE, isSyncedRootKey } from '../shared/blockTypes';
 import type { BlockChange, BlocksChangedMessage, ChangesResponse, ChangeLogEntry, StreamStartMessage, StreamDataMessage, StreamEndMessage } from '../shared/types';
 import { CLIENT_ID } from './config';
 import { state } from './state';
@@ -7,8 +7,13 @@ import { showNotification } from './notification';
 
 /**
  * Plugin API가 실제로 DB에 쓸 수 있는 키 (RisuAI allowedDbKeys 미러).
- * __pluginApis__.getDatabase()의 Proxy가 이 목록에 없는 키는
- * pluginCustomStorage로 리다이렉트하므로 실제 DB에 반영되지 않음
+ *
+ * __pluginApis__.getDatabase()는 Proxy 객체를 반환하며,
+ * 읽기/쓰기 모두 이 목록에 없는 키는 pluginCustomStorage로 리다이렉트된다.
+ * Object.keys(db)도 이 목록에 해당하는 키만 반환한다.
+ *
+ * 따라서 이 목록에 없는 ROOT 키의 변경 감지는
+ * 클라이언트에서 불가능하며, 서버 측 글로벌 diff로만 가능하다.
  */
 const PLUGIN_WRITABLE_KEYS: ReadonlySet<string> = new Set([
   'characters', 'modules', 'enabledModules', 'moduleIntergration',
@@ -36,58 +41,6 @@ interface PluginApis {
 }
 
 declare var __pluginApis__: PluginApis | undefined;
-
-/** 스냅샷 추적 대상 키인지 판별 (transient/메타데이터/characters 제외) */
-function isTrackedKey(key: string): boolean {
-  if (key.startsWith('__')) return false;
-  if (key === 'characters') return false;
-  if (IGNORED_ROOT_KEYS.has(key)) return false;
-  return true;
-}
-
-/** 현재 DB의 추적 대상 키 값으로 스냅샷 갱신 */
-export function updateRootSnapshot(): void {
-  if (typeof __pluginApis__ === 'undefined') return;
-  try {
-    const db = __pluginApis__.getDatabase();
-    const snap: Record<string, string> = {};
-    for (const key of Object.keys(db)) {
-      if (!isTrackedKey(key)) continue;
-      snap[key] = JSON.stringify(db[key]);
-    }
-    state.rootSnapshot = snap;
-  } catch { /* non-fatal */ }
-}
-
-/**
- * 스냅샷 대비 실제 변경된 키 목록 반환. null = 비교 불가 (서버 fallback).
- * 비교와 동시에 스냅샷을 현재 DB 상태로 갱신한다 (write 응답 대기 중 race condition 방지).
- */
-export function diffRootSnapshot(): string[] | null {
-  if (typeof __pluginApis__ === 'undefined') return null;
-  if (Object.keys(state.rootSnapshot).length === 0) return null;
-  try {
-    const db = __pluginApis__.getDatabase();
-    const changed: string[] = [];
-    const newSnap: Record<string, string> = {};
-    for (const key of Object.keys(db)) {
-      if (!isTrackedKey(key)) continue;
-      const cur = JSON.stringify(db[key]);
-      newSnap[key] = cur;
-      if (cur !== state.rootSnapshot[key]) {
-        changed.push(key);
-      }
-    }
-    // 스냅샷에 있었지만 DB에서 사라진 키도 변경으로 감지
-    for (const key of Object.keys(state.rootSnapshot)) {
-      if (!(key in newSnap)) {
-        changed.push(key);
-      }
-    }
-    state.rootSnapshot = newSnap;
-    return changed;
-  } catch { return null; }
-}
 
 /** Catch-up: 놓친 변경분 복구 */
 export function catchUpFromServer(): void {
@@ -248,7 +201,6 @@ export function handleBlocksChanged(msg: BlocksChangedMessage): void {
       } else if (r.type === 'root') {
         if (!r.data) { needsReload = true; return; }
         applyRootSafeKeys(db, r.data, r.block.changedKeys!);
-        updateRootSnapshot();
       }
     });
 

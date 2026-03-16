@@ -19,8 +19,6 @@ interface ClientState {
   notificationEl: HTMLDivElement | null;
   dismissTimer: ReturnType<typeof setTimeout> | null;
   activeStreams: Map<string, StreamState>;
-  /** ROOT synced key 스냅샷 — echo 방지용. key → JSON.stringify(value) */
-  rootSnapshot: Record<string, string>;
 }
 
 export const state: ClientState = {
@@ -33,7 +31,6 @@ export const state: ClientState = {
   notificationEl: null,
   dismissTimer: null,
   activeStreams: new Map(),
-  rootSnapshot: {},
 };
 
 export const MAX_RECONNECT_DELAY = 30000;

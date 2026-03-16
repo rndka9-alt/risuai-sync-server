@@ -29,6 +29,11 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   ws.on('message', (raw: WebSocket.RawData) => {
     try {
       const msg: ClientMessage = JSON.parse(raw.toString());
+      if (msg.type === 'init') {
+        // 클라이언트 첫 연결: 글로벌 ROOT 캐시를 per-client 캐시로 복사 (echo 방지 baseline)
+        sync.initClientRootCache(clientId);
+        return;
+      }
       if (msg.type === 'write-notify') {
         // DB write는 서버 프록시에서 감지하므로 여기서는 무시
         if (msg.file === config.DB_PATH) return;
@@ -54,6 +59,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
     if (clients.get(clientId) === ws) {
       clients.delete(clientId);
     }
+    sync.removeClientCache(clientId);
     console.log(`[Sync] Client disconnected: ${clientId} (total: ${clients.size})`);
   });
 });
@@ -108,8 +114,6 @@ function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse): void
 function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void {
   const rawClientId = req.headers['x-sync-client-id'];
   const senderClientId = typeof rawClientId === 'string' ? rawClientId : null;
-  const rawRootChanged = req.headers['x-sync-root-changed'];
-  const clientRootChanged = typeof rawRootChanged === 'string' ? rawRootChanged : null;
   const chunks: Buffer[] = [];
   req.on('data', (chunk: Buffer) => chunks.push(chunk));
   req.on('end', () => {
@@ -124,7 +128,6 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
 
     const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: config.UPSTREAM.host };
     delete headers['x-sync-client-id'];
-    delete headers['x-sync-root-changed'];
 
     const proxyReq = http.request(
       {
@@ -141,7 +144,7 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
         if (proxyRes.statusCode! >= 200 && proxyRes.statusCode! < 300) {
           setImmediate(() => {
             try {
-              sync.processDbWrite(buffer, senderClientId, clientRootChanged);
+              sync.processDbWrite(buffer, senderClientId);
             } catch (e) {
               console.error('[Sync] Error processing DB write:', e);
               sync.broadcastDbChanged(senderClientId);

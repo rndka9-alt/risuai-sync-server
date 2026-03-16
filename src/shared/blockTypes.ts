@@ -134,7 +134,8 @@ export const SYNCED_ROOT_KEYS: ReadonlySet<string> = new Set([
 
 /**
  * Transient ROOT 키 — 매 저장마다 변경되는 내부 상태.
- * broadcast 하지 않으며, 클라이언트 스냅샷에서도 추적하지 않음.
+ * broadcast 하지 않으며, diff에서 무시한다.
+ * 이 목록에 없는 non-SYNCED 키는 "unknown"으로 분류되어 refresh fallback broadcast 대상.
  */
 export const IGNORED_ROOT_KEYS: ReadonlySet<string> = new Set([
   'saveTime', 'genTime', 'formatversion', 'didFirstSetup',
