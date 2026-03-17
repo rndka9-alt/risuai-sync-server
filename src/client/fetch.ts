@@ -113,7 +113,10 @@ const patchedFetch: typeof fetch = function (input, init) {
           const body = buffered.body;
           if (body instanceof Uint8Array &&
               await isUnchangedRemoteBlock(charId, body)) {
-            return new Response('ok', { status: 200 });
+            return new Response(JSON.stringify({ success: true }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            });
           }
         } catch {
           // dedup 실패 시 정상 전달
