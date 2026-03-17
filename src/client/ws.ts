@@ -1,7 +1,7 @@
 import { SYNC_TOKEN, CLIENT_ID } from './config';
 import { state, MAX_RECONNECT_DELAY } from './state';
 import { catchUpFromServer, handleBlocksChanged, handleStreamStart, handleStreamData, handleStreamEnd } from './sync';
-import { showNotification } from './notification';
+import { showNotification, showWriteFailedNotification } from './notification';
 import type { ServerMessage, ChangesResponse } from '../shared/types';
 
 /** WebSocket 연결 */
@@ -75,6 +75,8 @@ export function connect(): void {
         handleStreamData(msg);
       } else if (msg.type === 'stream-end') {
         handleStreamEnd(msg);
+      } else if (msg.type === 'write-failed') {
+        showWriteFailedNotification();
       }
     } catch {
       // 파싱 실패 무시

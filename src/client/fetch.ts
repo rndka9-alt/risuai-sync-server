@@ -1,6 +1,7 @@
 import { CLIENT_ID } from './config';
 import { state } from './state';
 import type { StreamState } from './state';
+import { showWriteFailedNotification } from './notification';
 
 /** fetch monkey-patch */
 const originalFetch = window.fetch;
@@ -64,10 +65,61 @@ function findStreamTarget(): string | null {
   }
 }
 
+/** /api/write 재시도: 네트워크 에러 또는 5xx 시 exponential backoff */
+const WRITE_MAX_RETRIES = 3;
+const WRITE_RETRY_BASE_DELAY_MS = 1000;
+
+async function fetchWriteWithRetry(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
+  // ReadableStream body는 한 번만 소비 가능하므로 ArrayBuffer로 버퍼링
+  if (init.body instanceof ReadableStream) {
+    const reader = init.body.getReader();
+    const chunks: Uint8Array[] = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+    const total = chunks.reduce((sum, c) => sum + c.byteLength, 0);
+    const buf = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      buf.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    init = { ...init, body: buf };
+  }
+
+  let lastResponse: Response | null = null;
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt <= WRITE_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const delay = WRITE_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+    try {
+      const response = await originalFetch.call(window, input, init);
+      // 2xx~4xx: 성공 또는 클라이언트 에러 → 재시도 불필요
+      if (response.ok || response.status < 500) return response;
+      // 5xx: 서버 에러 → 재시도
+      lastResponse = response;
+    } catch (err) {
+      // 네트워크 에러 (TypeError) → 재시도
+      lastError = err;
+    }
+  }
+
+  showWriteFailedNotification();
+
+  if (lastResponse) return lastResponse;
+  throw lastError;
+}
+
 const patchedFetch: typeof fetch = function (input, init) {
-  // POST /api/write 시 x-sync-client-id 헤더 추가 (sender 식별용)
+  // POST /api/write 시 x-sync-client-id 헤더 추가 + 재시도 래핑
   if (init && init.method === 'POST' && input === '/api/write' && init.headers) {
     setHeader(init.headers, 'x-sync-client-id', CLIENT_ID);
+    return fetchWriteWithRetry(input, init);
   }
 
   // POST /proxy2 시 스트리밍 보호 + sync 헤더 추가

@@ -22,7 +22,8 @@ export type ServerMessage =
   | DbChangedMessage
   | StreamStartMessage
   | StreamDataMessage
-  | StreamEndMessage;
+  | StreamEndMessage
+  | WriteFailedMessage;
 
 export interface BlocksChangedMessage extends Versioned {
   type: 'blocks-changed';
@@ -60,6 +61,13 @@ export interface StreamDataMessage {
 export interface StreamEndMessage {
   type: 'stream-end';
   streamId: string;
+  timestamp: number;
+}
+
+export interface WriteFailedMessage {
+  type: 'write-failed';
+  path: string;
+  attempts: number;
   timestamp: number;
 }
 

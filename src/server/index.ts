@@ -7,7 +7,7 @@ import * as config from './config';
 import * as cache from './cache';
 import * as sync from './sync';
 import { buildClientJs } from './client-bundle';
-import type { ClientMessage, HealthResponse } from '../shared/types';
+import type { ClientMessage, HealthResponse, ServerMessage } from '../shared/types';
 import * as logger from './logger';
 
 /** WebSocket 연결 관리 */
@@ -89,6 +89,68 @@ function sendJson(res: http.ServerResponse, statusCode: number, data: object): v
   res.end(body);
 }
 
+/** Write 실패 시 WebSocket으로 sender에게 알림 */
+function notifyWriteFailed(senderClientId: string | null, path: string, attempts: number): void {
+  if (!senderClientId) return;
+  const ws = clients.get(senderClientId);
+  if (!ws || ws.readyState !== 1) return;
+  const msg: ServerMessage = {
+    type: 'write-failed',
+    path,
+    attempts,
+    timestamp: Date.now(),
+  };
+  ws.send(JSON.stringify(msg));
+}
+
+/** Upstream 프록시 + 재시도 (buffered body 전용) */
+function sendUpstreamWithRetry(
+  options: {
+    path: string;
+    method: string;
+    headers: Record<string, string | string[] | undefined>;
+    body: Buffer;
+  },
+  onResponse: (proxyRes: http.IncomingMessage) => void,
+  onAllFailed: () => void,
+  attempt: number = 0,
+): void {
+  const proxyReq = http.request(
+    {
+      hostname: config.UPSTREAM.hostname,
+      port: config.UPSTREAM.port,
+      path: options.path,
+      method: options.method,
+      headers: options.headers,
+    },
+    onResponse,
+  );
+
+  proxyReq.on('error', (err) => {
+    if (attempt < config.RETRY_MAX_ATTEMPTS) {
+      const delay = config.RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+      logger.warn('Upstream error, retrying', {
+        attempt: String(attempt + 1),
+        maxAttempts: String(config.RETRY_MAX_ATTEMPTS),
+        delay: `${delay}ms`,
+        error: err.message,
+        path: options.path,
+      });
+      setTimeout(() => sendUpstreamWithRetry(options, onResponse, onAllFailed, attempt + 1), delay);
+    } else {
+      logger.error('Upstream error, all retries exhausted', {
+        attempts: String(attempt + 1),
+        error: err.message,
+        path: options.path,
+      });
+      onAllFailed();
+    }
+  });
+
+  proxyReq.write(options.body);
+  proxyReq.end();
+}
+
 function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
   const proxyReq = http.request(
     {
@@ -130,14 +192,8 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
     const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: config.UPSTREAM.host };
     delete headers['x-sync-client-id'];
 
-    const proxyReq = http.request(
-      {
-        hostname: config.UPSTREAM.hostname,
-        port: config.UPSTREAM.port,
-        path: req.url,
-        method: req.method,
-        headers,
-      },
+    sendUpstreamWithRetry(
+      { path: req.url!, method: req.method!, headers, body: buffer },
       (proxyRes) => {
         res.writeHead(proxyRes.statusCode!, proxyRes.headers);
         proxyRes.pipe(res);
@@ -153,17 +209,14 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
           });
         }
       },
+      () => {
+        if (!res.headersSent) {
+          res.writeHead(502, { 'content-type': 'text/plain' });
+        }
+        res.end('Bad Gateway');
+        notifyWriteFailed(senderClientId, req.url || '/api/write', config.RETRY_MAX_ATTEMPTS + 1);
+      },
     );
-
-    proxyReq.on('error', () => {
-      if (!res.headersSent) {
-        res.writeHead(502, { 'content-type': 'text/plain' });
-      }
-      res.end('Bad Gateway');
-    });
-
-    proxyReq.write(buffer);
-    proxyReq.end();
   });
 }
 
@@ -187,14 +240,8 @@ function proxyRemoteBlockWrite(req: http.IncomingMessage, res: http.ServerRespon
     const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: config.UPSTREAM.host };
     delete headers['x-sync-client-id'];
 
-    const proxyReq = http.request(
-      {
-        hostname: config.UPSTREAM.hostname,
-        port: config.UPSTREAM.port,
-        path: req.url,
-        method: req.method,
-        headers,
-      },
+    sendUpstreamWithRetry(
+      { path: req.url!, method: req.method!, headers, body: buffer },
       (proxyRes) => {
         res.writeHead(proxyRes.statusCode!, proxyRes.headers);
         proxyRes.pipe(res);
@@ -210,17 +257,14 @@ function proxyRemoteBlockWrite(req: http.IncomingMessage, res: http.ServerRespon
           });
         }
       },
+      () => {
+        if (!res.headersSent) {
+          res.writeHead(502, { 'content-type': 'text/plain' });
+        }
+        res.end('Bad Gateway');
+        notifyWriteFailed(senderClientId, req.url || '/api/write', config.RETRY_MAX_ATTEMPTS + 1);
+      },
     );
-
-    proxyReq.on('error', () => {
-      if (!res.headersSent) {
-        res.writeHead(502, { 'content-type': 'text/plain' });
-      }
-      res.end('Bad Gateway');
-    });
-
-    proxyReq.write(buffer);
-    proxyReq.end();
   });
 }
 
