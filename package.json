@@ -2,6 +2,7 @@
   "name": "risu-sync-server",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "dependencies": {
     "ws": "^8.18.0"
   },
