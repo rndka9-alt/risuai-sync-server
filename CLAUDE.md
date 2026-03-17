@@ -19,3 +19,9 @@ RisuAI 소스코드를 수정하지 않고, 프록시 레이어와 플러그인 
 ## 코딩 컨벤션
 
 - TypeScript에서 `as` 타입단언을 사용하지 않는다. interface의 index signature, 제네릭, 타입 가드 등으로 해결한다.
+
+## 테스트
+
+- 서버 코드(`src/server/`)를 수정하면 관련 테스트를 보강한다.
+- 테스트 파일은 소스 옆에 co-locate한다 (`parser.ts` → `parser.test.ts`).
+- 코드 수정 후 반드시 `npm test`를 실행하여 전체 테스트가 통과하는지 확인한다.
