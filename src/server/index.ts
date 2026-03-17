@@ -191,6 +191,7 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
       return;
     }
 
+    const seq = sync.reserveDbWrite();
     const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: config.UPSTREAM.host };
     delete headers['x-sync-client-id'];
 
@@ -201,17 +202,13 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
         proxyRes.pipe(res);
 
         if (proxyRes.statusCode! >= 200 && proxyRes.statusCode! < 300) {
-          setImmediate(() => {
-            try {
-              sync.processDbWrite(buffer, senderClientId);
-            } catch (e) {
-              logger.error('Error processing DB write', { error: e instanceof Error ? e.message : String(e) });
-              sync.broadcastDbChanged(senderClientId);
-            }
-          });
+          setImmediate(() => sync.enqueueDbWrite(seq, buffer, senderClientId));
+        } else {
+          sync.skipDbWrite(seq);
         }
       },
       () => {
+        sync.skipDbWrite(seq);
         if (!res.headersSent) {
           res.writeHead(502, { 'content-type': 'text/plain' });
         }
@@ -239,6 +236,7 @@ function proxyRemoteBlockWrite(req: http.IncomingMessage, res: http.ServerRespon
       return;
     }
 
+    const seq = charId ? sync.reserveRemoteWrite(charId) : null;
     const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: config.UPSTREAM.host };
     delete headers['x-sync-client-id'];
 
@@ -248,18 +246,16 @@ function proxyRemoteBlockWrite(req: http.IncomingMessage, res: http.ServerRespon
         res.writeHead(proxyRes.statusCode!, proxyRes.headers);
         proxyRes.pipe(res);
 
-        if (proxyRes.statusCode! >= 200 && proxyRes.statusCode! < 300 && charId) {
-          setImmediate(() => {
-            try {
-              sync.processRemoteBlockWrite(buffer, charId, senderClientId);
-            } catch (e) {
-              logger.error('Error processing remote block write', { error: e instanceof Error ? e.message : String(e) });
-              sync.broadcastDbChanged(senderClientId);
-            }
-          });
+        if (proxyRes.statusCode! >= 200 && proxyRes.statusCode! < 300 && charId && seq !== null) {
+          setImmediate(() => sync.enqueueRemoteWrite(seq, charId, buffer, senderClientId));
+        } else if (seq !== null && charId) {
+          sync.skipRemoteWrite(seq, charId);
         }
       },
       () => {
+        if (seq !== null && charId) {
+          sync.skipRemoteWrite(seq, charId);
+        }
         if (!res.headersSent) {
           res.writeHead(502, { 'content-type': 'text/plain' });
         }

@@ -7,6 +7,7 @@ import type { BlockChange, ServerMessage, StreamStartMessage, StreamDataMessage,
 import * as cache from './cache';
 import * as config from './config';
 import * as logger from './logger';
+import { WriteOrderQueue } from './write-order-queue';
 
 // server/index.ts 에서 init()으로 주입
 let clients: Map<string, WebSocket> | null = null;
@@ -550,6 +551,62 @@ export function endStream(streamId: string): void {
   };
   broadcast(endMsg, stream.senderClientId);
   activeStreams.delete(streamId);
+}
+
+// ─── Write Order Queue ─────────────────────────────────────────────
+
+const dbWriteQueue = new WriteOrderQueue();
+const remoteWriteQueues = new Map<string, WriteOrderQueue>();
+
+export function reserveDbWrite(): number {
+  return dbWriteQueue.reserve();
+}
+
+export function enqueueDbWrite(seq: number, buffer: Buffer, senderClientId: string | null): void {
+  dbWriteQueue.enqueue(seq, () => {
+    try {
+      processDbWrite(buffer, senderClientId);
+    } catch (e) {
+      logger.error('Error processing DB write (queued)', { error: e instanceof Error ? e.message : String(e) });
+      broadcastDbChanged(senderClientId);
+    }
+  });
+}
+
+export function skipDbWrite(seq: number): void {
+  dbWriteQueue.skip(seq);
+}
+
+export function reserveRemoteWrite(charId: string): number {
+  let queue = remoteWriteQueues.get(charId);
+  if (!queue) {
+    queue = new WriteOrderQueue();
+    remoteWriteQueues.set(charId, queue);
+  }
+  return queue.reserve();
+}
+
+export function enqueueRemoteWrite(
+  seq: number,
+  charId: string,
+  buffer: Buffer,
+  senderClientId: string | null,
+): void {
+  const queue = remoteWriteQueues.get(charId);
+  if (!queue) return;
+  queue.enqueue(seq, () => {
+    try {
+      processRemoteBlockWrite(buffer, charId, senderClientId);
+    } catch (e) {
+      logger.error('Error processing remote block write (queued)', { error: e instanceof Error ? e.message : String(e) });
+      broadcastDbChanged(senderClientId);
+    }
+  });
+}
+
+export function skipRemoteWrite(seq: number, charId: string): void {
+  const queue = remoteWriteQueues.get(charId);
+  if (queue) queue.skip(seq);
 }
 
 /**

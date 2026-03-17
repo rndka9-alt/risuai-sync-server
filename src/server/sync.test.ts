@@ -609,6 +609,145 @@ describe('streaming', () => {
   });
 });
 
+// ─── Write Order Queue Integration ────────────────────────────────
+
+describe('write ordering (DB)', () => {
+  let cache: typeof import('./cache');
+  let sync: typeof import('./sync');
+  let clientA: ReturnType<typeof createMockWs>;
+  let clientB: ReturnType<typeof createMockWs>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    cache = await import('./cache');
+    sync = await import('./sync');
+
+    clientA = createMockWs();
+    clientB = createMockWs();
+    const clients = new Map<string, ReturnType<typeof createMockWs>>();
+    clients.set('client-a', clientA);
+    clients.set('client-b', clientB);
+    // @ts-expect-error partial WebSocket mock
+    sync.init(clients);
+
+    // Init cache
+    sync.processDbWrite(buildRisuSave(
+      buildBlock(BLOCK_TYPE.ROOT, 'root', '{"__directory":["char1"],"saveTime":1}'),
+      buildBlock(BLOCK_TYPE.WITH_CHAT, 'char1', '{"name":"Alice"}'),
+    ), 'client-a');
+    clearSent(clientA);
+    clearSent(clientB);
+  });
+
+  it('processes out-of-order upstream responses in arrival order', () => {
+    const seq1 = sync.reserveDbWrite();
+    const seq2 = sync.reserveDbWrite();
+
+    const buf1 = buildRisuSave(
+      buildBlock(BLOCK_TYPE.ROOT, 'root', '{"__directory":["char1"],"saveTime":2}'),
+      buildBlock(BLOCK_TYPE.WITH_CHAT, 'char1', '{"name":"Bob"}'),
+    );
+    const buf2 = buildRisuSave(
+      buildBlock(BLOCK_TYPE.ROOT, 'root', '{"__directory":["char1"],"saveTime":3}'),
+      buildBlock(BLOCK_TYPE.WITH_CHAT, 'char1', '{"name":"Charlie"}'),
+    );
+
+    // seq2 response arrives first
+    sync.enqueueDbWrite(seq2, buf2, 'client-a');
+    expect(clientB._sent).toHaveLength(0); // blocked, waiting for seq1
+
+    // seq1 response arrives — both drain in order
+    sync.enqueueDbWrite(seq1, buf1, 'client-a');
+
+    // Cache should have Charlie (seq2, the newer data)
+    expect(cache.dataCache.get('char1')).toBe('{"name":"Charlie"}');
+
+    // Client B should have received 2 broadcasts
+    const bMsgs = sentMessages(clientB);
+    expect(bMsgs.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('skip unblocks subsequent writes', () => {
+    const seq1 = sync.reserveDbWrite();
+    const seq2 = sync.reserveDbWrite();
+
+    const buf2 = buildRisuSave(
+      buildBlock(BLOCK_TYPE.ROOT, 'root', '{"__directory":["char1"],"saveTime":3}'),
+      buildBlock(BLOCK_TYPE.WITH_CHAT, 'char1', '{"name":"Charlie"}'),
+    );
+
+    // seq2 arrives, seq1 failed
+    sync.enqueueDbWrite(seq2, buf2, 'client-a');
+    expect(clientB._sent).toHaveLength(0);
+
+    sync.skipDbWrite(seq1);
+
+    // Now seq2 should process
+    expect(cache.dataCache.get('char1')).toBe('{"name":"Charlie"}');
+    expect(sentMessages(clientB).length).toBeGreaterThan(0);
+  });
+});
+
+describe('write ordering (remote block)', () => {
+  let cache: typeof import('./cache');
+  let sync: typeof import('./sync');
+  let clientA: ReturnType<typeof createMockWs>;
+  let clientB: ReturnType<typeof createMockWs>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    cache = await import('./cache');
+    sync = await import('./sync');
+
+    clientA = createMockWs();
+    clientB = createMockWs();
+    const clients = new Map<string, ReturnType<typeof createMockWs>>();
+    clients.set('client-a', clientA);
+    clients.set('client-b', clientB);
+    // @ts-expect-error partial WebSocket mock
+    sync.init(clients);
+
+    // Init cache
+    sync.processDbWrite(buildRisuSave(
+      buildBlock(BLOCK_TYPE.ROOT, 'root', '{"__directory":["char1"]}'),
+    ), null);
+  });
+
+  it('processes out-of-order remote writes in arrival order', () => {
+    const seq1 = sync.reserveRemoteWrite('char1');
+    const seq2 = sync.reserveRemoteWrite('char1');
+
+    const buf1 = Buffer.from(JSON.stringify({ name: 'Bob' }));
+    const buf2 = Buffer.from(JSON.stringify({ name: 'Charlie' }));
+
+    // seq2 arrives first
+    sync.enqueueRemoteWrite(seq2, 'char1', buf2, 'client-a');
+    expect(clientB._sent).toHaveLength(0);
+
+    // seq1 arrives — both drain
+    sync.enqueueRemoteWrite(seq1, 'char1', buf1, 'client-a');
+
+    // Cache should have Charlie (newer)
+    expect(cache.dataCache.get('char1')).toBe(JSON.stringify({ name: 'Charlie' }));
+  });
+
+  it('different charIds have independent queues', () => {
+    const seqA = sync.reserveRemoteWrite('charA');
+    const seqB = sync.reserveRemoteWrite('charB');
+
+    const bufA = Buffer.from(JSON.stringify({ name: 'Alice' }));
+    const bufB = Buffer.from(JSON.stringify({ name: 'Bob' }));
+
+    // charB arrives — should process immediately (independent queue)
+    sync.enqueueRemoteWrite(seqB, 'charB', bufB, 'client-a');
+    expect(cache.dataCache.get('charB')).toBe(JSON.stringify({ name: 'Bob' }));
+
+    // charA arrives
+    sync.enqueueRemoteWrite(seqA, 'charA', bufA, 'client-a');
+    expect(cache.dataCache.get('charA')).toBe(JSON.stringify({ name: 'Alice' }));
+  });
+});
+
 // ─── Zombie stream cleanup ────────────────────────────────────────
 
 describe('zombie stream cleanup', () => {
