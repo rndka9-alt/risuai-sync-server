@@ -27,6 +27,11 @@ RisuAI 소스코드를 수정하지 않고, 프록시 레이어와 플러그인 
 Docker 구성은 `risu-files/custom-codes/risuai-network/` 레포에서 관리한다.
 이 프로젝트 단독으로 `docker build/run`하지 않고, network 레포의 `docker-compose.yml`로 실행한다.
 
+## Git
+
+- 커밋 시 `/commit-with-context`를 사용하여 의사결정 컨텍스트를 보존한다.
+- 후속 작업 시 `git log`를 확인하여 기존 결정 배경과 기각된 방향을 참조한다.
+
 ## 코딩 컨벤션
 
 - TypeScript에서 `as` 타입단언을 사용하지 않는다. interface의 index signature, 제네릭, 타입 가드 등으로 해결한다.
