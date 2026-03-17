@@ -154,6 +154,9 @@ function sendUpstreamWithRetry(
 }
 
 function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+  const t0 = performance.now();
+  const rid = req.headers['x-request-id'] || '';
+
   const proxyReq = http.request(
     {
       hostname: config.UPSTREAM.hostname,
@@ -163,6 +166,7 @@ function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse): void
       headers: { ...req.headers, host: config.UPSTREAM.host },
     },
     (proxyRes) => {
+      logger.debug('upstream TTFB', { rid, url: req.url, ms: (performance.now() - t0).toFixed(0) });
       res.writeHead(proxyRes.statusCode!, proxyRes.headers);
       proxyRes.pipe(res);
     },
@@ -437,6 +441,19 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
 
 /** HTTP 서버 */
 const server = http.createServer((req, res) => {
+  const reqStart = performance.now();
+
+  // Propagate or generate request ID for cross-service tracing
+  const rid = (typeof req.headers['x-request-id'] === 'string' && req.headers['x-request-id'])
+    || (typeof req.headers['cf-ray'] === 'string' && req.headers['cf-ray'])
+    || crypto.randomBytes(8).toString('hex');
+  req.headers['x-request-id'] = rid;
+
+  res.on('finish', () => {
+    const duration = (performance.now() - reqStart).toFixed(0);
+    logger.info('Response', { rid, method: req.method, url: req.url, status: String(res.statusCode), ms: duration });
+  });
+
   // --- /sync/* 경로 ---
   if (req.url!.startsWith('/sync/')) {
     const url = new URL(req.url!, `http://${req.headers.host}`);
