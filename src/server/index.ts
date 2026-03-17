@@ -609,6 +609,50 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // --- GET /api/list → .meta.meta 이상 필터링 ---
+  // risuai 클라이언트 버그: cleanup 루프가 .meta 파일에도 .meta를 덧붙여
+  // .meta.meta.meta... 체인이 무한 성장 → ENAMETOOLONG 500.
+  // .meta.meta 이상을 list에서 숨겨 체인 성장을 차단한다.
+  if (req.method === 'GET' && req.url === '/api/list') {
+    const proxyReq = http.request(
+      {
+        hostname: config.UPSTREAM.hostname,
+        port: config.UPSTREAM.port,
+        path: req.url,
+        method: req.method,
+        headers: { ...req.headers, host: config.UPSTREAM.host },
+      },
+      (proxyRes) => {
+        const chunks: Buffer[] = [];
+        proxyRes.on('data', (chunk: Buffer) => chunks.push(chunk));
+        proxyRes.on('end', () => {
+          const body = Buffer.concat(chunks);
+          try {
+            const data = JSON.parse(body.toString('utf-8'));
+            if (data.content && Array.isArray(data.content)) {
+              data.content = data.content.filter((entry: string) => !entry.includes('.meta.meta'));
+            }
+            const filtered = JSON.stringify(data);
+            const resHeaders = { ...proxyRes.headers };
+            resHeaders['content-length'] = String(Buffer.byteLength(filtered));
+            delete resHeaders['transfer-encoding'];
+            res.writeHead(proxyRes.statusCode!, resHeaders);
+            res.end(filtered);
+          } catch {
+            res.writeHead(proxyRes.statusCode!, proxyRes.headers);
+            res.end(body);
+          }
+        });
+      },
+    );
+    proxyReq.on('error', () => {
+      if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' });
+      res.end('Bad Gateway');
+    });
+    proxyReq.end();
+    return;
+  }
+
   // --- 그 외 → 투명 프록시 ---
   proxyRequest(req, res);
 });
