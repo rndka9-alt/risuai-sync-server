@@ -11,6 +11,12 @@ RisuAI 소스코드를 수정하지 않고, 프록시 레이어와 플러그인 
   - 캐릭터 데이터는 `POST /api/write` (`file-path: remotes/{charId}.local.bin`)로 **별도 요청**으로 저장된다.
   - 메인 바이너리(`database/database.bin`)에는 캐릭터 실제 데이터 대신 REMOTE 메타데이터 블록(type 6)만 포함된다.
 
+## 설계 우선순위
+
+1. **P1 — 투명성**: risuai와의 통신이 반드시 성공해야 한다. 이 서버에 장애가 생겨도 클라이언트 요청은 risuai까지 도달해야 한다. risuai의 기존 HTTP API 인터페이스를 변경하거나 훼손하지 않는다.
+2. **P2 — 독립 동작**: risuai + 이 서버만으로 완전히 동작해야 한다. DB Proxy 등 다른 사이드카 없이도 모든 기능이 정상 작동한다.
+3. **P3 — 체이닝 호환**: Caddy 리버스 프록시, DB Proxy 등과 함께 사용될 때에도 정상 동작해야 한다.
+
 ## 핵심 제약
 
 - **RisuAI 본체는 수정할 수 없다.** 제3자가 관리하는 별도 프로젝트이므로, sync 관련 기능/문제는 반드시 이 프로젝트(risu-files/custom-codes/sync/) 내에서 해결해야 한다.
