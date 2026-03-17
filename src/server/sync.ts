@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { parseRisuSaveBlocks } from './parser';
 import { BLOCK_TYPE, isSyncedRootKey, isIgnoredRootKey } from '../shared/blockTypes';
 import type { BlockChange, ServerMessage, StreamStartMessage, StreamDataMessage, StreamEndMessage } from '../shared/types';
+import { FILE_PATH_HEADER } from '../shared/headers';
 import * as cache from './cache';
 import * as config from './config';
 import * as logger from './logger';
@@ -74,7 +75,7 @@ function hexDecode(hex: string): string {
 
 export function isDbWrite(req: IncomingMessage): boolean {
   if (req.method !== 'POST' || req.url !== '/api/write') return false;
-  const fp = req.headers['file-path'];
+  const fp = req.headers[FILE_PATH_HEADER];
   if (!fp || typeof fp !== 'string') return false;
   try {
     return hexDecode(fp) === config.DB_PATH;
@@ -88,7 +89,7 @@ const REMOTE_FILE_RE = /^remotes\/(.+)\.local\.bin$/;
 
 export function isRemoteBlockWrite(req: IncomingMessage): boolean {
   if (req.method !== 'POST' || req.url !== '/api/write') return false;
-  const fp = req.headers['file-path'];
+  const fp = req.headers[FILE_PATH_HEADER];
   if (!fp || typeof fp !== 'string') return false;
   try {
     return REMOTE_FILE_RE.test(hexDecode(fp));
@@ -98,7 +99,7 @@ export function isRemoteBlockWrite(req: IncomingMessage): boolean {
 }
 
 export function extractCharIdFromFilePath(req: IncomingMessage): string | null {
-  const fp = req.headers['file-path'];
+  const fp = req.headers[FILE_PATH_HEADER];
   if (!fp || typeof fp !== 'string') return null;
   try {
     const match = hexDecode(fp).match(REMOTE_FILE_RE);

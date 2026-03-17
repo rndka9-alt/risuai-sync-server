@@ -155,7 +155,7 @@ function sendUpstreamWithRetry(
 
 function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
   const t0 = performance.now();
-  const rid = req.headers['x-request-id'] || '';
+  const rid = req.headers[config.REQUEST_ID_HEADER] || '';
 
   const proxyReq = http.request(
     {
@@ -278,7 +278,7 @@ function isProxy2Post(req: http.IncomingMessage): boolean {
 function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void {
   const rawClientId = req.headers[config.CLIENT_ID_HEADER];
   const senderClientId = typeof rawClientId === 'string' ? rawClientId : 'unknown';
-  const rawTargetCharId = req.headers['x-sync-proxy2-target-char'];
+  const rawTargetCharId = req.headers[config.PROXY2_TARGET_HEADER];
   const targetCharId = typeof rawTargetCharId === 'string' ? rawTargetCharId : null;
 
   // Streaming protection: 동일 캐릭터에 대한 다른 기기의 proxy2 요청 차단
@@ -420,7 +420,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
         host: config.UPSTREAM.host,
       };
       delete headers[config.CLIENT_ID_HEADER];
-      delete headers['x-sync-proxy2-target-char'];
+      delete headers[config.PROXY2_TARGET_HEADER];
       headers['content-length'] = String(body.length);
 
       upstreamReq = http.request(
@@ -444,10 +444,10 @@ const server = http.createServer((req, res) => {
   const reqStart = performance.now();
 
   // Propagate or generate request ID for cross-service tracing
-  const rid = (typeof req.headers['x-request-id'] === 'string' && req.headers['x-request-id'])
+  const rid = (typeof req.headers[config.REQUEST_ID_HEADER] === 'string' && req.headers[config.REQUEST_ID_HEADER])
     || (typeof req.headers['cf-ray'] === 'string' && req.headers['cf-ray'])
     || crypto.randomBytes(8).toString('hex');
-  req.headers['x-request-id'] = rid;
+  req.headers[config.REQUEST_ID_HEADER] = rid;
 
   // Ensure client ID header is always present — client patch may not be loaded
   if (typeof req.headers[config.CLIENT_ID_HEADER] !== 'string') {
@@ -458,7 +458,7 @@ const server = http.createServer((req, res) => {
     const duration = (performance.now() - reqStart).toFixed(0);
     const logFields: Record<string, string | undefined> = { rid, method: req.method, url: req.url, status: String(res.statusCode), ms: duration };
     // file-path 헤더가 있으면 디코딩해서 로그에 포함 (backup 이슈 추적용)
-    const rawFp = req.headers['file-path'];
+    const rawFp = req.headers[config.FILE_PATH_HEADER];
     if (typeof rawFp === 'string' && rawFp.length > 0) {
       logFields.filePath = sync.hexDecodeFilePath(rawFp);
     }

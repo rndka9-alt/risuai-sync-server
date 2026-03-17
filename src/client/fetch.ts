@@ -1,4 +1,4 @@
-import { CLIENT_ID, CLIENT_ID_HEADER } from './config';
+import { CLIENT_ID, CLIENT_ID_HEADER, PROXY2_TARGET_HEADER } from './config';
 import { state } from './state';
 import type { StreamState } from './state';
 import { showWriteFailedNotification } from './notification';
@@ -144,7 +144,7 @@ const patchedFetch: typeof fetch = function (input, init) {
     if (!init.headers) init.headers = {};
     setHeader(init.headers, CLIENT_ID_HEADER, CLIENT_ID);
     if (target) {
-      setHeader(init.headers, 'x-sync-proxy2-target-char', target);
+      setHeader(init.headers, PROXY2_TARGET_HEADER, target);
     }
   }
 
