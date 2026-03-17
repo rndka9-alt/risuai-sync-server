@@ -9,6 +9,8 @@ import * as sync from './sync';
 import { buildClientJs } from './client-bundle';
 import type { ClientMessage, HealthResponse, ServerMessage } from '../shared/types';
 import * as logger from './logger';
+import { decodeProxy2Headers, forwardToLlm } from './llm-proxy';
+import * as streamBuffer from './stream-buffer';
 
 /** WebSocket 연결 관리 */
 const clients = new Map<string, WebSocket>();
@@ -295,67 +297,145 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
     return;
   }
 
-  // Strip sync headers before forwarding to upstream
-  const headers: Record<string, string | string[] | undefined> = {
-    ...req.headers,
-    host: config.UPSTREAM.host,
-  };
-  delete headers['x-sync-client-id'];
-  delete headers['x-sync-proxy2-target-char'];
+  // LLM 직접 프록시 디코딩 시도 (body 소비 전에 헤더만 읽음)
+  const decoded = decodeProxy2Headers(req);
 
-  const proxyReq = http.request(
-    {
-      hostname: config.UPSTREAM.hostname,
-      port: config.UPSTREAM.port,
-      path: req.url,
-      method: req.method,
-      headers,
-    },
-    (proxyRes) => {
+  // Client disconnect tracking
+  let clientDisconnected = false;
+  let activeStreamId: string | null = null;
+  let upstreamReq: http.ClientRequest | null = null;
+
+  res.on('close', () => {
+    if (clientDisconnected) return;
+    clientDisconnected = true;
+
+    // SSE 스트리밍 중이면 upstream을 유지 (재연결 가능)
+    // 비-SSE 요청이면 upstream 중단
+    if (activeStreamId) {
+      logger.info('Client disconnected, stream buffered for reconnect', { streamId: activeStreamId, sender: senderClientId });
+    } else if (upstreamReq && !upstreamReq.destroyed) {
+      upstreamReq.destroy();
+    }
+  });
+
+  // Body 버퍼링 (LLM 직접 호출 / upstream fallback 모두 필요)
+  const chunks: Buffer[] = [];
+  req.on('data', (chunk: Buffer) => chunks.push(chunk));
+  req.on('end', () => {
+    const body = Buffer.concat(chunks);
+
+    // Body 수신 완료 전에 이미 연결 끊김
+    if (clientDisconnected) return;
+
+    // SSE 응답 공통 핸들러
+    const onResponse = (proxyRes: http.IncomingMessage): void => {
       const contentType = proxyRes.headers['content-type'] || '';
       const isSSE = contentType.includes('text/event-stream');
 
       if (!isSSE) {
-        // Non-streaming: pass through normally
-        res.writeHead(proxyRes.statusCode!, proxyRes.headers);
-        proxyRes.pipe(res);
+        const nonStreamId = crypto.randomBytes(8).toString('hex');
+        const responseHeaders = { ...proxyRes.headers, 'x-sync-stream-id': nonStreamId };
+
+        if (!clientDisconnected) {
+          res.writeHead(proxyRes.statusCode!, responseHeaders);
+        }
+
+        const resChunks: Buffer[] = [];
+        proxyRes.on('data', (chunk: Buffer) => {
+          if (!clientDisconnected) res.write(chunk);
+          resChunks.push(chunk);
+        });
+        proxyRes.on('end', () => {
+          streamBuffer.storeResponse(nonStreamId, senderClientId, targetCharId, proxyRes.statusCode!, proxyRes.headers, Buffer.concat(resChunks));
+          if (!clientDisconnected && !res.writableEnded) res.end();
+        });
         return;
       }
 
-      // SSE streaming response — tee it
+      // SSE streaming response — buffer + tee
       const streamId = crypto.randomBytes(8).toString('hex');
+      activeStreamId = streamId;
       logger.info('Stream started', { streamId, sender: senderClientId, targetCharId: targetCharId || 'unknown' });
 
       sync.createStream(streamId, senderClientId, targetCharId);
+      streamBuffer.create(streamId, senderClientId, targetCharId, upstreamReq!);
 
-      res.writeHead(proxyRes.statusCode!, proxyRes.headers);
+      // x-sync-stream-id: 클라이언트가 재연결할 때 사용
+      const responseHeaders = { ...proxyRes.headers, 'x-sync-stream-id': streamId };
+
+      if (!clientDisconnected) {
+        res.writeHead(proxyRes.statusCode!, responseHeaders);
+      }
 
       proxyRes.on('data', (chunk: Buffer) => {
-        res.write(chunk);
+        if (!clientDisconnected) res.write(chunk);
         sync.processStreamChunk(streamId, chunk);
+        streamBuffer.addChunk(streamId, chunk);
       });
 
       proxyRes.on('end', () => {
         logger.info('Stream ended', { streamId });
-        sync.endStream(streamId);
-        res.end();
+        if (activeStreamId === streamId) {
+          sync.endStream(streamId);
+          activeStreamId = null;
+        }
+        streamBuffer.complete(streamId);
+        if (!clientDisconnected && !res.writableEnded) res.end();
       });
 
       proxyRes.on('error', (err) => {
-        logger.error('Stream error', { streamId, error: err.message });
-        sync.endStream(streamId);
-        if (!res.writableEnded) res.end();
+        // abort()로 인한 에러는 정상 흐름
+        if (!clientDisconnected) {
+          logger.error('Stream error', { streamId, error: err.message });
+        }
+        if (activeStreamId === streamId) {
+          sync.endStream(streamId);
+          activeStreamId = null;
+        }
+        streamBuffer.fail(streamId, err.message);
+        if (!clientDisconnected && !res.writableEnded) res.end();
       });
-    },
-  );
+    };
 
-  req.pipe(proxyReq);
+    const onError = (err: Error): void => {
+      if (clientDisconnected) return;
+      logger.error('proxy2 error', { error: err.message });
+      if (!res.headersSent) {
+        res.writeHead(502, { 'content-type': 'text/plain' });
+      }
+      res.end('Bad Gateway');
+    };
 
-  proxyReq.on('error', () => {
-    if (!res.headersSent) {
-      res.writeHead(502, { 'content-type': 'text/plain' });
+    if (decoded) {
+      // LLM API 직접 호출
+      if (!decoded.headers['x-forwarded-for']) {
+        const remoteAddr = req.socket.remoteAddress;
+        if (remoteAddr) decoded.headers['x-forwarded-for'] = remoteAddr;
+      }
+      upstreamReq = forwardToLlm(decoded, body, onResponse, onError);
+    } else {
+      // risu-url 없음 → upstream fallback
+      const headers: Record<string, string | string[] | undefined> = {
+        ...req.headers,
+        host: config.UPSTREAM.host,
+      };
+      delete headers['x-sync-client-id'];
+      delete headers['x-sync-proxy2-target-char'];
+      headers['content-length'] = String(body.length);
+
+      upstreamReq = http.request(
+        {
+          hostname: config.UPSTREAM.hostname,
+          port: config.UPSTREAM.port,
+          path: req.url,
+          method: req.method,
+          headers,
+        },
+        onResponse,
+      );
+      upstreamReq.on('error', onError);
+      upstreamReq.end(body);
     }
-    res.end('Bad Gateway');
   });
 }
 
@@ -421,6 +501,32 @@ const server = http.createServer((req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/sync/manifest') {
       sendJson(res, 200, cache.getManifest());
+      return;
+    }
+
+    // --- Stream reconnection ---
+    if (req.method === 'GET' && url.pathname === '/sync/streams/active') {
+      sendJson(res, 200, { streams: streamBuffer.getActiveStreams() });
+      return;
+    }
+
+    const streamMatch = url.pathname.match(/^\/sync\/stream\/([^/]+)$/);
+    if (req.method === 'GET' && streamMatch) {
+      if (!streamBuffer.subscribe(streamMatch[1], res)) {
+        sendJson(res, 404, { error: 'stream not found' });
+      }
+      return;
+    }
+
+    const abortMatch = url.pathname.match(/^\/sync\/stream\/([^/]+)\/abort$/);
+    if (req.method === 'POST' && abortMatch) {
+      const streamId = abortMatch[1];
+      if (streamBuffer.abort(streamId)) {
+        sync.endStream(streamId);
+        sendJson(res, 200, { success: true });
+      } else {
+        sendJson(res, 404, { error: 'stream not found or already finished' });
+      }
       return;
     }
   }
