@@ -8,6 +8,7 @@ import * as cache from './cache';
 import * as sync from './sync';
 import { buildClientJs } from './client-bundle';
 import type { ClientMessage, HealthResponse } from '../shared/types';
+import * as logger from './logger';
 
 /** WebSocket 연결 관리 */
 const clients = new Map<string, WebSocket>();
@@ -22,7 +23,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
 
   clients.set(clientId, ws);
   aliveState.set(ws, true);
-  console.log(`[Sync] Client connected: ${clientId} (total: ${clients.size})`);
+  logger.info('Client connected', { clientId, total: String(clients.size) });
 
   ws.on('pong', () => { aliveState.set(ws, true); });
 
@@ -60,7 +61,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
       clients.delete(clientId);
     }
     sync.removeClientCache(clientId);
-    console.log(`[Sync] Client disconnected: ${clientId} (total: ${clients.size})`);
+    logger.info('Client disconnected', { clientId, total: String(clients.size) });
   });
 });
 
@@ -121,7 +122,7 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
 
     // Streaming protection: 다른 기기의 스트리밍 중 write 차단
     if (sync.isWriteBlockedByStream(senderClientId)) {
-      console.log(`[Sync] Write blocked: ${senderClientId || 'unknown'} (streaming in progress)`);
+      logger.warn('Write blocked (streaming in progress)', { sender: senderClientId || 'unknown' });
       sendJson(res, 409, { error: 'streaming_in_progress', message: 'Write blocked: streaming in progress' });
       return;
     }
@@ -146,7 +147,7 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
             try {
               sync.processDbWrite(buffer, senderClientId);
             } catch (e) {
-              console.error('[Sync] Error processing DB write:', e);
+              logger.error('Error processing DB write', { error: e instanceof Error ? e.message : String(e) });
               sync.broadcastDbChanged(senderClientId);
             }
           });
@@ -178,7 +179,7 @@ function proxyRemoteBlockWrite(req: http.IncomingMessage, res: http.ServerRespon
     const buffer = Buffer.concat(chunks);
 
     if (sync.isWriteBlockedByStream(senderClientId)) {
-      console.log(`[Sync] Remote write blocked: ${senderClientId || 'unknown'} (streaming in progress)`);
+      logger.warn('Remote write blocked (streaming in progress)', { sender: senderClientId || 'unknown' });
       sendJson(res, 409, { error: 'streaming_in_progress', message: 'Write blocked: streaming in progress' });
       return;
     }
@@ -203,7 +204,7 @@ function proxyRemoteBlockWrite(req: http.IncomingMessage, res: http.ServerRespon
             try {
               sync.processRemoteBlockWrite(buffer, charId, senderClientId);
             } catch (e) {
-              console.error('[Sync] Error processing remote block write:', e);
+              logger.error('Error processing remote block write', { error: e instanceof Error ? e.message : String(e) });
               sync.broadcastDbChanged(senderClientId);
             }
           });
@@ -237,7 +238,11 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
   // Streaming protection: 동일 캐릭터에 대한 다른 기기의 proxy2 요청 차단
   const existingStream = sync.findActiveStreamForChar(targetCharId);
   if (existingStream && existingStream.senderClientId !== senderClientId) {
-    console.log(`[Sync] proxy2 blocked: ${senderClientId} → ${targetCharId} (active stream: ${existingStream.id})`);
+    logger.warn('proxy2 blocked (active stream)', {
+      sender: senderClientId,
+      targetCharId: targetCharId || 'unknown',
+      existingStreamId: existingStream.id,
+    });
     sendJson(res, 409, {
       error: 'streaming_in_progress',
       streamId: existingStream.id,
@@ -275,7 +280,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
 
       // SSE streaming response — tee it
       const streamId = crypto.randomBytes(8).toString('hex');
-      console.log(`[Sync] Stream started: ${streamId} (sender: ${senderClientId}, target: ${targetCharId})`);
+      logger.info('Stream started', { streamId, sender: senderClientId, targetCharId: targetCharId || 'unknown' });
 
       sync.createStream(streamId, senderClientId, targetCharId);
 
@@ -287,13 +292,13 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       });
 
       proxyRes.on('end', () => {
-        console.log(`[Sync] Stream ended: ${streamId}`);
+        logger.info('Stream ended', { streamId });
         sync.endStream(streamId);
         res.end();
       });
 
       proxyRes.on('error', (err) => {
-        console.error(`[Sync] Stream error: ${streamId}`, err);
+        logger.error('Stream error', { streamId, error: err.message });
         sync.endStream(streamId);
         if (!res.writableEnded) res.end();
       });
@@ -352,12 +357,12 @@ const server = http.createServer((req, res) => {
         return;
       }
       const hashEntry = cache.hashCache.get(name);
-      const headers: Record<string, string | number> = {
+      const resHeaders: Record<string, string | number> = {
         'content-type': 'application/json; charset=utf-8',
         'content-length': Buffer.byteLength(data),
       };
-      if (hashEntry) headers['x-block-hash'] = hashEntry.hash;
-      res.writeHead(200, headers);
+      if (hashEntry) resHeaders['x-block-hash'] = hashEntry.hash;
+      res.writeHead(200, resHeaders);
       res.end(data);
       return;
     }
@@ -393,12 +398,12 @@ const server = http.createServer((req, res) => {
           let html = Buffer.concat(chunks).toString('utf-8');
           html = html.replace('</head>', config.SCRIPT_TAG + '</head>');
 
-          const headers = { ...proxyRes.headers };
-          headers['content-length'] = String(Buffer.byteLength(html));
-          delete headers['content-encoding'];
-          delete headers['transfer-encoding'];
+          const resHeaders = { ...proxyRes.headers };
+          resHeaders['content-length'] = String(Buffer.byteLength(html));
+          delete resHeaders['content-encoding'];
+          delete resHeaders['transfer-encoding'];
 
-          res.writeHead(proxyRes.statusCode!, headers);
+          res.writeHead(proxyRes.statusCode!, resHeaders);
           res.end(html);
         });
       },
@@ -477,10 +482,11 @@ server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) =
 
 /** 서버 시작 */
 server.listen(config.PORT, () => {
-  console.log(`[Sync] Server listening on port ${config.PORT}`);
-  console.log(`[Sync] Upstream: ${config.UPSTREAM.href}`);
-  console.log(`[Sync] DB path: ${config.DB_PATH}`);
-  console.log(`[Sync] Token: ${config.SYNC_TOKEN.slice(0, 4)}****`);
-  console.log(`[Sync] Max cache size: ${(config.MAX_CACHE_SIZE / 1048576).toFixed(0)}MB`);
-  console.log(`[Sync] Max log entries: ${config.MAX_LOG_ENTRIES}`);
+  logger.info(`Server listening on port ${config.PORT}`);
+  logger.info(`Upstream: ${config.UPSTREAM.href}`);
+  logger.info(`DB path: ${config.DB_PATH}`);
+  logger.info(`Token: ${config.SYNC_TOKEN.slice(0, 4)}****`);
+  logger.info(`Max cache size: ${(config.MAX_CACHE_SIZE / 1048576).toFixed(0)}MB`);
+  logger.info(`Max log entries: ${config.MAX_LOG_ENTRIES}`);
+  logger.info(`Log level: ${config.LOG_LEVEL}`);
 });

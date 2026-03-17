@@ -6,6 +6,7 @@ import { BLOCK_TYPE, isSyncedRootKey, isIgnoredRootKey } from '../shared/blockTy
 import type { BlockChange, ServerMessage, StreamStartMessage, StreamDataMessage, StreamEndMessage } from '../shared/types';
 import * as cache from './cache';
 import * as config from './config';
+import * as logger from './logger';
 
 // server/index.ts 에서 init()으로 주입
 let clients: Map<string, WebSocket> | null = null;
@@ -152,6 +153,16 @@ function diffDirectory(
         deleted.push(entry);
       }
     }
+    if (added.length > 0 || deleted.length > 0) {
+      logger.debug('diffDirectory', {
+        oldDirSize: String(oldDir.size),
+        newDirSize: String(newDir.length),
+        added: JSON.stringify(added),
+        deleted: JSON.stringify(deleted),
+        oldDir: JSON.stringify([...oldDir]),
+        newDir: JSON.stringify(newDir),
+      });
+    }
     return { added, deleted };
   } catch {
     return null;
@@ -170,7 +181,7 @@ export function processRemoteBlockWrite(
   try {
     JSON.parse(jsonStr);
   } catch {
-    console.error(`[Sync] Remote block "${charId}" is not valid JSON, skipping`);
+    logger.error('Remote block is not valid JSON, skipping', { charId });
     return;
   }
 
@@ -178,7 +189,7 @@ export function processRemoteBlockWrite(
     // database.bin 이전에 도착한 경우: 캐시만 채움
     cache.hashCache.set(charId, { type: BLOCK_TYPE.WITH_CHAT, hash });
     cache.dataCache.set(charId, jsonStr);
-    console.log(`[Sync] Remote block cached (pre-init): ${charId}`);
+    logger.info('Remote block cached (pre-init)', { charId });
     return;
   }
 
@@ -197,7 +208,7 @@ export function processRemoteBlockWrite(
 
   const version = cache.addChangeLogEntry(changed.concat(added), [], senderClientId);
 
-  console.log(`[Sync] v${version}: remote block ${isNew ? 'added' : 'changed'}: ${charId} (sender: ${senderClientId || 'unknown'})`);
+  logger.info(`v${version}: remote block ${isNew ? 'added' : 'changed'}`, { charId, sender: senderClientId || 'unknown' });
 
   broadcast(
     { type: 'blocks-changed', epoch: cache.epoch, version, changed, added, deleted: [], timestamp: Date.now() },
@@ -230,7 +241,7 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
       cache.dataCache.set(name, block.json);
     }
     cache.setCacheInitialized(true);
-    console.log(`[Sync] Cache initialized with ${blocks.size} blocks`);
+    logger.info(`Cache initialized with ${blocks.size} blocks`);
     return;
   }
 
@@ -262,6 +273,17 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
             cache.hashCache.delete(entry);
             cache.dataCache.delete(entry);
           }
+        }
+
+        // ROOT 변경 상세 debug 로깅
+        if (globalDiff && globalDiff.syncedKeys.includes('pluginCustomStorage') && globalOldJson) {
+          try {
+            const oldRoot: { [k: string]: unknown } = JSON.parse(globalOldJson);
+            const newRoot: { [k: string]: unknown } = JSON.parse(block.json);
+            const oldPcs = (oldRoot.pluginCustomStorage || {}) as { [k: string]: unknown };
+            const newPcs = (newRoot.pluginCustomStorage || {}) as { [k: string]: unknown };
+            logger.diffObjects('pluginCustomStorage', oldPcs, newPcs);
+          } catch { /* parse failure */ }
         }
 
         // Per-client intersection diff: 글로벌 diff와 클라이언트 diff의 교집합만 broadcast.
@@ -316,11 +338,22 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
 
   const version = cache.addChangeLogEntry(changed.concat(added), deleted, senderClientId);
 
-  console.log(`[Sync] v${version}: ${changed.length} changed, ${added.length} added, ${deleted.length} deleted (sender: ${senderClientId || 'unknown'})`);
-  changed.forEach((c) => {
-    if (c.changedKeys) console.log(`[Sync]   ${c.name} (type ${c.type}): changedKeys=${JSON.stringify(c.changedKeys)}`);
-    else console.log(`[Sync]   ${c.name} (type ${c.type})`);
+  logger.info(`v${version}: ${changed.length} changed, ${added.length} added, ${deleted.length} deleted`, {
+    sender: senderClientId || 'unknown',
   });
+  for (const c of changed) {
+    logger.debug('changed', {
+      name: c.name,
+      type: String(c.type),
+      changedKeys: c.changedKeys ? JSON.stringify(c.changedKeys) : 'all',
+    });
+  }
+  for (const a of added) {
+    logger.debug('added', { name: a.name, type: String(a.type) });
+  }
+  for (const d of deleted) {
+    logger.debug('deleted', { name: d });
+  }
 
   broadcast(
     { type: 'blocks-changed', epoch: cache.epoch, version, changed, added, deleted, timestamp: Date.now() },

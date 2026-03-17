@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import zlib from 'zlib';
 import { BLOCK_TYPE, isBlockType } from '../shared/blockTypes';
 import type { BlockType } from '../shared/blockTypes';
+import * as logger from './logger';
 
 const MAGIC_HEADER = Buffer.from('RISUSAVE\0', 'utf-8');
 
@@ -72,7 +73,7 @@ export function parseRisuSaveBlocks(buffer: Buffer): ParseResult | null {
         try {
           data = zlib.gunzipSync(data);
         } catch (e) {
-          console.error(`[Sync] Failed to decompress block "${name}":`, formatError(e));
+          logger.error('Failed to decompress block', { name, error: formatError(e) });
           continue;
         }
       }
@@ -94,7 +95,7 @@ export function parseRisuSaveBlocks(buffer: Buffer): ParseResult | null {
         }
       }
     } catch (e) {
-      console.error('[Sync] Block parse error at offset', offset, ':', formatError(e));
+      logger.error('Block parse error', { offset: String(offset), error: formatError(e) });
       break;
     }
   }
