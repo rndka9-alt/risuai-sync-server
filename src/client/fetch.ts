@@ -2,6 +2,7 @@ import { CLIENT_ID } from './config';
 import { state } from './state';
 import type { StreamState } from './state';
 import { showWriteFailedNotification } from './notification';
+import { extractRemoteCharId, isUnchangedRemoteBlock, ensureBufferedBody } from './dedup';
 
 /** fetch monkey-patch */
 const originalFetch = window.fetch;
@@ -70,24 +71,7 @@ const WRITE_MAX_RETRIES = 3;
 const WRITE_RETRY_BASE_DELAY_MS = 1000;
 
 async function fetchWriteWithRetry(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
-  // ReadableStream body는 한 번만 소비 가능하므로 ArrayBuffer로 버퍼링
-  if (init.body instanceof ReadableStream) {
-    const reader = init.body.getReader();
-    const chunks: Uint8Array[] = [];
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) chunks.push(value);
-    }
-    const total = chunks.reduce((sum, c) => sum + c.byteLength, 0);
-    const buf = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      buf.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    init = { ...init, body: buf };
-  }
+  init = await ensureBufferedBody(init);
 
   let lastResponse: Response | null = null;
   let lastError: unknown = null;
@@ -119,6 +103,25 @@ const patchedFetch: typeof fetch = function (input, init) {
   // POST /api/write 시 x-sync-client-id 헤더 추가 + 재시도 래핑
   if (init && init.method === 'POST' && input === '/api/write' && init.headers) {
     setHeader(init.headers, 'x-sync-client-id', CLIENT_ID);
+
+    // Remote block write dedup: 해시가 동일하면 요청 자체를 보내지 않음
+    const charId = extractRemoteCharId(init.headers);
+    if (charId) {
+      return (async () => {
+        const buffered = await ensureBufferedBody(init);
+        try {
+          const body = buffered.body;
+          if (body instanceof Uint8Array &&
+              await isUnchangedRemoteBlock(charId, body)) {
+            return new Response('ok', { status: 200 });
+          }
+        } catch {
+          // dedup 실패 시 정상 전달
+        }
+        return fetchWriteWithRetry(input, buffered);
+      })();
+    }
+
     return fetchWriteWithRetry(input, init);
   }
 
