@@ -1,6 +1,9 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** .env 파서 (dotenv 의존성 없음) */
 function loadEnvFile(filePath: string): void {

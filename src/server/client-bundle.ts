@@ -1,6 +1,9 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import * as config from './config';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // dist/client.js — esbuild가 빌드한 클라이언트 번들
 const clientBundlePath = path.join(__dirname, 'client.js');
