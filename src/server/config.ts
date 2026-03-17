@@ -37,7 +37,13 @@ export const MAX_LOG_ENTRIES = parseInt(process.env.MAX_LOG_ENTRIES || '1000', 1
 export const LOG_LEVEL = (process.env.LOG_LEVEL || 'info').toLowerCase();
 export const RETRY_MAX_ATTEMPTS = parseInt(process.env.RETRY_MAX_ATTEMPTS || '2', 10);
 export const RETRY_BASE_DELAY_MS = parseInt(process.env.RETRY_BASE_DELAY_MS || '500', 10);
-export const SCRIPT_TAG = '<script defer src="/sync/client.js"></script>';
+/**
+ * SCRIPT_TAG는 서버 시작 후 client-bundle의 hash가 계산된 뒤 getScriptTag()로 사용.
+ * 정적 export 대신 함수로 제공하여 순환 의존 방지.
+ */
+export function getScriptTag(bundleHash: string): string {
+  return `<script defer src="/sync/client.js?v=${bundleHash}"></script>`;
+}
 
 export {
   CLIENT_ID_HEADER,

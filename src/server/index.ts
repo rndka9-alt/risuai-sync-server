@@ -6,7 +6,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import * as config from './config';
 import * as cache from './cache';
 import * as sync from './sync';
-import { buildClientJs } from './client-bundle';
+import { buildClientJs, clientBundleHash } from './client-bundle';
 import type { ClientMessage, HealthResponse, ServerMessage } from '../shared/types';
 import * as logger from './logger';
 import { decodeProxy2Headers, forwardToLlm } from './llm-proxy';
@@ -198,6 +198,7 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
     const seq = sync.reserveDbWrite();
     const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: config.UPSTREAM.host };
     delete headers[config.CLIENT_ID_HEADER];
+    delete headers['x-sync-client-id'];
 
     sendUpstreamWithRetry(
       { path: req.url!, method: req.method!, headers, body: buffer },
@@ -243,6 +244,7 @@ function proxyRemoteBlockWrite(req: http.IncomingMessage, res: http.ServerRespon
     const seq = charId ? sync.reserveRemoteWrite(charId) : null;
     const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: config.UPSTREAM.host };
     delete headers[config.CLIENT_ID_HEADER];
+    delete headers['x-sync-client-id'];
 
     sendUpstreamWithRetry(
       { path: req.url!, method: req.method!, headers, body: buffer },
@@ -420,6 +422,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
         host: config.UPSTREAM.host,
       };
       delete headers[config.CLIENT_ID_HEADER];
+      delete headers['x-sync-client-id'];
       delete headers[config.PROXY2_TARGET_HEADER];
       headers['content-length'] = String(body.length);
 
@@ -449,9 +452,15 @@ const server = http.createServer((req, res) => {
     || crypto.randomBytes(8).toString('hex');
   req.headers[config.REQUEST_ID_HEADER] = rid;
 
-  // Ensure client ID header is always present — client patch may not be loaded
+  // Ensure client ID header is always present — client patch may not be loaded.
+  // Fallback: 구 버전 클라이언트가 x-sync-client-id를 보낼 수 있음 (헤더 이름 변경 이전 캐시).
   if (typeof req.headers[config.CLIENT_ID_HEADER] !== 'string') {
-    req.headers[config.CLIENT_ID_HEADER] = `srv-${crypto.randomBytes(8).toString('hex')}`;
+    const legacyId = req.headers['x-sync-client-id'];
+    if (typeof legacyId === 'string') {
+      req.headers[config.CLIENT_ID_HEADER] = legacyId;
+    } else {
+      req.headers[config.CLIENT_ID_HEADER] = `srv-${crypto.randomBytes(8).toString('hex')}`;
+    }
   }
 
   res.on('finish', () => {
@@ -471,10 +480,15 @@ const server = http.createServer((req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/sync/client.js') {
       const js = buildClientJs();
+      // ?v= 쿼리가 있으면 immutable (hash 기반 cache-busting), 없으면 no-store
+      const hasVersion = url.searchParams.has('v');
+      const cacheControl = hasVersion
+        ? 'public, max-age=31536000, immutable'
+        : 'no-store';
       res.writeHead(200, {
         'content-type': 'application/javascript; charset=utf-8',
         'content-length': Buffer.byteLength(js),
-        'cache-control': 'no-cache',
+        'cache-control': cacheControl,
       });
       res.end(js);
       return;
@@ -570,7 +584,7 @@ const server = http.createServer((req, res) => {
         proxyRes.on('data', (chunk: Buffer) => chunks.push(chunk));
         proxyRes.on('end', () => {
           let html = Buffer.concat(chunks).toString('utf-8');
-          html = html.replace('</head>', config.SCRIPT_TAG + '</head>');
+          html = html.replace('</head>', config.getScriptTag(clientBundleHash) + '</head>');
 
           const resHeaders = { ...proxyRes.headers };
           resHeaders['content-length'] = String(Buffer.byteLength(html));
