@@ -27,13 +27,39 @@ const streams = new Map<string, BufferedStream>();
 
 /** Completed stream 보존 기간 (5분) */
 const STREAM_TTL_MS = 5 * 60 * 1000;
+/** Zombie streaming 엔트리 강제 정리 (30분) */
+const STREAM_ZOMBIE_TTL_MS = 30 * 60 * 1000;
 
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [id, stream] of streams) {
+    // Completed/failed stream 만료 정리
     if (stream.completedAt && now - stream.completedAt > STREAM_TTL_MS) {
       streams.delete(id);
       logger.debug('Stream buffer expired', { streamId: id });
+      continue;
+    }
+
+    // Zombie streaming 엔트리 강제 정리: upstream 무응답 시
+    if (stream.status === 'streaming' && now - stream.createdAt > STREAM_ZOMBIE_TTL_MS) {
+      logger.warn('Zombie stream buffer cleaned up', { streamId: id, ageSeconds: String(Math.round((now - stream.createdAt) / 1000)) });
+
+      if (stream.upstreamReq && !stream.upstreamReq.destroyed) {
+        stream.upstreamReq.destroy();
+      }
+
+      stream.status = 'failed';
+      stream.completedAt = now;
+      stream.error = 'stream timeout';
+      stream.upstreamReq = null;
+
+      for (const sub of stream.subscribers) {
+        if (!sub.writableEnded) {
+          sub.write(`data: ${JSON.stringify({ type: 'error', error: 'stream timeout' })}\n\n`);
+          sub.end();
+        }
+      }
+      stream.subscribers.clear();
     }
   }
 }, 60_000);
@@ -99,6 +125,7 @@ export function complete(id: string): void {
 
   stream.status = 'completed';
   stream.completedAt = Date.now();
+  stream.upstreamReq = null;
 
   for (const sub of stream.subscribers) {
     if (!sub.writableEnded) {
@@ -116,6 +143,7 @@ export function fail(id: string, error: string): void {
   stream.status = 'failed';
   stream.completedAt = Date.now();
   stream.error = error;
+  stream.upstreamReq = null;
 
   for (const sub of stream.subscribers) {
     if (!sub.writableEnded) {
@@ -137,6 +165,7 @@ export function abort(id: string): boolean {
   if (stream.upstreamReq && !stream.upstreamReq.destroyed) {
     stream.upstreamReq.destroy();
   }
+  stream.upstreamReq = null;
 
   if (stream.lineBuffer.trim()) {
     const deltas = parseSSEDeltas(stream.lineBuffer);
