@@ -15,20 +15,33 @@ let clients: Map<string, WebSocket> | null = null;
  * Per-client ROOT 데이터 캐시 — echo 방지용.
  * 각 클라이언트의 마지막 ROOT write를 저장하여,
  * 글로벌 diff와의 intersection으로 사전 존재 차이를 필터링한다.
- * WS 재연결 시에도 보존하여 false delete를 방지한다.
+ *
+ * WS 연결 해제 시 즉시 삭제하지 않고 TTL(10분)을 두어,
+ * 짧은 재연결 기간 동안 false delete를 방지한다.
  */
 const clientRootCache = new Map<string, string>();
+
+/** 연결 해제 시각 기록 — TTL 정리용. 연결 중인 클라이언트는 엔트리 없음. */
+const clientDisconnectedAt = new Map<string, number>();
+const CLIENT_CACHE_TTL_MS = 10 * 60 * 1000; // 10분
+
+const clientCacheCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [clientId, disconnectedAt] of clientDisconnectedAt) {
+    if (now - disconnectedAt > CLIENT_CACHE_TTL_MS) {
+      clientRootCache.delete(clientId);
+      clientDisconnectedAt.delete(clientId);
+    }
+  }
+}, 60_000);
+clientCacheCleanupTimer.unref();
 
 export function init(clientsMap: Map<string, WebSocket>): void {
   clients = clientsMap;
 }
 
 export function removeClientCache(clientId: string): void {
-  // clientRootCache[clientId]를 의도적으로 삭제하지 않음:
-  // WS 재연결 시 sender의 실제 DB 상태를 보존하여
-  // false delete와 ROOT key echo를 방지한다.
-  // CLIENT_ID는 페이지 로드마다 랜덤 생성되므로 stale 엔트리는 자연히 한정된다.
-  void clientId;
+  clientDisconnectedAt.set(clientId, Date.now());
 }
 
 /** WS init 메시지 수신 시: per-client ROOT 캐시 초기화.
@@ -36,6 +49,7 @@ export function removeClientCache(clientId: string): void {
  * 재연결: 기존 엔트리 보존 (sender의 실제 DB 상태를 유지하여 false delete 방지).
  */
 export function initClientRootCache(clientId: string): void {
+  clientDisconnectedAt.delete(clientId);
   if (clientRootCache.has(clientId)) return;
   const rootJson = cache.dataCache.get('root');
   if (rootJson) {

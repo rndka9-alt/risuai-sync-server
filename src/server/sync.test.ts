@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { IncomingMessage } from 'http';
 import { BLOCK_TYPE } from '../shared/blockTypes';
 import {
@@ -386,6 +386,91 @@ describe('processRemoteBlockWrite', () => {
     // Same data again → no broadcast
     sync.processRemoteBlockWrite(data, 'char1', 'client-a');
     expect(clientB._sent).toHaveLength(0);
+  });
+});
+
+// ─── clientRootCache TTL ───────────────────────────────────────────
+
+describe('clientRootCache cleanup', () => {
+  let cache: typeof import('./cache');
+  let sync: typeof import('./sync');
+  let clientA: ReturnType<typeof createMockWs>;
+  let clientB: ReturnType<typeof createMockWs>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    cache = await import('./cache');
+    sync = await import('./sync');
+
+    clientA = createMockWs();
+    clientB = createMockWs();
+    const clients = new Map<string, ReturnType<typeof createMockWs>>();
+    clients.set('client-a', clientA);
+    clients.set('client-b', clientB);
+    // @ts-expect-error partial WebSocket mock
+    sync.init(clients);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('preserves cache for quick reconnection', () => {
+    // Init cache + write to populate clientRootCache
+    const root1 = JSON.stringify({ __directory: ['char1', 'char2'], saveTime: 1 });
+    sync.processDbWrite(buildRisuSave(buildBlock(BLOCK_TYPE.ROOT, 'root', root1)), 'client-a');
+    sync.initClientRootCache('client-a');
+
+    const root2 = JSON.stringify({ __directory: ['char1', 'char2'], saveTime: 2 });
+    sync.processDbWrite(buildRisuSave(buildBlock(BLOCK_TYPE.ROOT, 'root', root2)), 'client-a');
+
+    // Disconnect
+    sync.removeClientCache('client-a');
+
+    // 1 minute later: reconnect (within 10-min TTL)
+    vi.advanceTimersByTime(60_000);
+    sync.initClientRootCache('client-a');
+
+    // Cache should still work — delete detection uses sender's old root
+    clearSent(clientA);
+    clearSent(clientB);
+    const root3 = JSON.stringify({ __directory: ['char1'], saveTime: 3 });
+    sync.processDbWrite(buildRisuSave(buildBlock(BLOCK_TYPE.ROOT, 'root', root3)), 'client-a');
+
+    const bMsgs = sentMessages(clientB);
+    expect(bMsgs.length).toBeGreaterThan(0);
+    const msg = bMsgs[0] as { deleted: string[] };
+    expect(msg.deleted).toContain('char2');
+  });
+
+  it('cleans up stale entries after TTL expires', () => {
+    // Init + write
+    const root1 = JSON.stringify({ __directory: ['char1'], saveTime: 1 });
+    sync.processDbWrite(buildRisuSave(buildBlock(BLOCK_TYPE.ROOT, 'root', root1)), 'client-a');
+    sync.initClientRootCache('client-a');
+
+    const root2 = JSON.stringify({ __directory: ['char1'], saveTime: 2, temperature: 0.7 });
+    sync.processDbWrite(buildRisuSave(buildBlock(BLOCK_TYPE.ROOT, 'root', root2)), 'client-a');
+
+    // Disconnect client-a
+    sync.removeClientCache('client-a');
+
+    // Advance past TTL (10 min) + cleanup interval (1 min)
+    vi.advanceTimersByTime(11 * 60_000);
+
+    // New client with same name connects — should get fresh cache from global, not the old one
+    sync.initClientRootCache('client-a');
+
+    // Write with temperature change — should broadcast via global diff fallback
+    clearSent(clientA);
+    clearSent(clientB);
+    const root3 = JSON.stringify({ __directory: ['char1'], saveTime: 3, temperature: 0.9 });
+    sync.processDbWrite(buildRisuSave(buildBlock(BLOCK_TYPE.ROOT, 'root', root3)), 'client-a');
+
+    // The point: no crash, no stale data — per-client cache was cleaned
+    const bMsgs = sentMessages(clientB);
+    expect(bMsgs.length).toBeGreaterThan(0);
   });
 });
 
