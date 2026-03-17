@@ -15,7 +15,7 @@ let clients: Map<string, WebSocket> | null = null;
  * Per-client ROOT 데이터 캐시 — echo 방지용.
  * 각 클라이언트의 마지막 ROOT write를 저장하여,
  * 글로벌 diff와의 intersection으로 사전 존재 차이를 필터링한다.
- * disconnect 시 removeClientCache()로 정리.
+ * WS 재연결 시에도 보존하여 false delete를 방지한다.
  */
 const clientRootCache = new Map<string, string>();
 
@@ -24,11 +24,19 @@ export function init(clientsMap: Map<string, WebSocket>): void {
 }
 
 export function removeClientCache(clientId: string): void {
-  clientRootCache.delete(clientId);
+  // clientRootCache[clientId]를 의도적으로 삭제하지 않음:
+  // WS 재연결 시 sender의 실제 DB 상태를 보존하여
+  // false delete와 ROOT key echo를 방지한다.
+  // CLIENT_ID는 페이지 로드마다 랜덤 생성되므로 stale 엔트리는 자연히 한정된다.
+  void clientId;
 }
 
-/** WS init 메시지 수신 시: 현재 글로벌 ROOT 캐시를 per-client baseline으로 복사 */
+/** WS init 메시지 수신 시: per-client ROOT 캐시 초기화.
+ * 최초 접속: 글로벌 ROOT에서 복사 (클라이언트가 방금 로딩한 DB와 일치).
+ * 재연결: 기존 엔트리 보존 (sender의 실제 DB 상태를 유지하여 false delete 방지).
+ */
 export function initClientRootCache(clientId: string): void {
+  if (clientRootCache.has(clientId)) return;
   const rootJson = cache.dataCache.get('root');
   if (rootJson) {
     clientRootCache.set(clientId, rootJson);
@@ -259,19 +267,26 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
         const globalOldJson = cache.dataCache.get(name);
         const globalDiff = diffRootKeys(globalOldJson, block.json);
 
-        // hashCache에는 바이너리에 포함된 블록만 등록되므로,
-        // incremental save 시 캐릭터 추가/삭제를 감지하지 못함.
-        // __directory 비교로 보완. (항상 글로벌 캐시 기준)
+        // __directory 비교: 캐릭터 추가/삭제 감지.
+        // - 추가: 글로벌 캐시 기준 (새 캐릭터 감지)
+        // - 삭제: sender의 이전 __directory 기준 (false delete 방지)
+        //   → sender가 아직 수신하지 못한 항목을 "삭제"로 오판하는 것을 차단
         const blockNames = new Set(blocks.keys());
-        const dirDiff = diffDirectory(globalOldJson, block.json, blockNames);
-        if (dirDiff) {
-          for (const entry of dirDiff.added) {
+        const globalDirDiff = diffDirectory(globalOldJson, block.json, blockNames);
+        if (globalDirDiff) {
+          for (const entry of globalDirDiff.added) {
             added.push({ name: entry, type: BLOCK_TYPE.WITHOUT_CHAT });
           }
-          for (const entry of dirDiff.deleted) {
-            deleted.push(entry);
-            cache.hashCache.delete(entry);
-            cache.dataCache.delete(entry);
+        }
+        const senderOldRootJson = senderClientId ? clientRootCache.get(senderClientId) : undefined;
+        if (senderOldRootJson) {
+          const senderDirDiff = diffDirectory(senderOldRootJson, block.json, blockNames);
+          if (senderDirDiff) {
+            for (const entry of senderDirDiff.deleted) {
+              deleted.push(entry);
+              cache.hashCache.delete(entry);
+              cache.dataCache.delete(entry);
+            }
           }
         }
 
