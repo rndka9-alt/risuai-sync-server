@@ -423,10 +423,25 @@ interface ActiveStream {
   accumulatedText: string;
   lastBroadcastTime: number;
   lineBuffer: string;
+  createdAt: number;
 }
 
 const activeStreams = new Map<string, ActiveStream>();
 const STREAM_BROADCAST_INTERVAL_MS = 50;
+
+/** Zombie 스트림 정리: 30분 이상 살아있는 스트림을 강제 종료 */
+const STREAM_TTL_MS = 30 * 60 * 1000;
+
+const streamCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [streamId, stream] of activeStreams) {
+    if (now - stream.createdAt > STREAM_TTL_MS) {
+      logger.warn('Zombie stream cleaned up', { streamId, senderClientId: stream.senderClientId, age: `${Math.round((now - stream.createdAt) / 1000)}s` });
+      endStream(streamId);
+    }
+  }
+}, 60_000);
+streamCleanupTimer.unref();
 
 /** Streaming Protection: proxy2 & write drop 판정 */
 export function findActiveStreamForChar(targetCharId: string | null): ActiveStream | null {
@@ -457,6 +472,7 @@ export function createStream(
     accumulatedText: '',
     lastBroadcastTime: 0,
     lineBuffer: '',
+    createdAt: Date.now(),
   };
   activeStreams.set(streamId, stream);
 

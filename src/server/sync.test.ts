@@ -608,3 +608,65 @@ describe('streaming', () => {
     expect(sync.isWriteBlockedByStream('client-b')).toBe(false);
   });
 });
+
+// ─── Zombie stream cleanup ────────────────────────────────────────
+
+describe('zombie stream cleanup', () => {
+  let sync: typeof import('./sync');
+  let clientA: ReturnType<typeof createMockWs>;
+  let clientB: ReturnType<typeof createMockWs>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    await import('./cache');
+    sync = await import('./sync');
+
+    clientA = createMockWs();
+    clientB = createMockWs();
+    const clients = new Map<string, ReturnType<typeof createMockWs>>();
+    clients.set('client-a', clientA);
+    clients.set('client-b', clientB);
+    // @ts-expect-error partial WebSocket mock
+    sync.init(clients);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('cleans up streams older than 30 minutes', () => {
+    sync.createStream('s1', 'client-a', 'char1');
+    clearSent(clientA);
+    clearSent(clientB);
+
+    // Stream should still be active before TTL
+    expect(sync.findActiveStreamForChar('char1')).not.toBeNull();
+    expect(sync.isWriteBlockedByStream('client-b')).toBe(true);
+
+    // Advance past TTL (30 min) + cleanup interval (1 min)
+    vi.advanceTimersByTime(31 * 60_000);
+
+    // Stream should be cleaned up — endStream broadcasts stream-end
+    expect(sync.findActiveStreamForChar('char1')).toBeNull();
+    expect(sync.isWriteBlockedByStream('client-b')).toBe(false);
+
+    // Verify stream-end was broadcast to non-sender
+    const bMsgs = sentMessages(clientB);
+    const endMsg = bMsgs.find((m) => (m as { type: string }).type === 'stream-end');
+    expect(endMsg).toBeDefined();
+  });
+
+  it('does not clean up streams within TTL', () => {
+    sync.createStream('s1', 'client-a', 'char1');
+    clearSent(clientB);
+
+    // 20 minutes — still within TTL
+    vi.advanceTimersByTime(20 * 60_000);
+
+    expect(sync.findActiveStreamForChar('char1')).not.toBeNull();
+    expect(sync.isWriteBlockedByStream('client-b')).toBe(true);
+
+    sync.endStream('s1');
+  });
+});
