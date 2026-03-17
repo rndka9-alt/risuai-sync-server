@@ -181,7 +181,7 @@ function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse): void
 }
 
 function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void {
-  const rawClientId = req.headers['x-sync-client-id'];
+  const rawClientId = req.headers[config.CLIENT_ID_HEADER];
   const senderClientId = typeof rawClientId === 'string' ? rawClientId : null;
   const chunks: Buffer[] = [];
   req.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -197,7 +197,7 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
 
     const seq = sync.reserveDbWrite();
     const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: config.UPSTREAM.host };
-    delete headers['x-sync-client-id'];
+    delete headers[config.CLIENT_ID_HEADER];
 
     sendUpstreamWithRetry(
       { path: req.url!, method: req.method!, headers, body: buffer },
@@ -225,7 +225,7 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
 
 /** Remote block write 프록시 (Node 서버 모드: remotes/{charId}.local.bin) */
 function proxyRemoteBlockWrite(req: http.IncomingMessage, res: http.ServerResponse): void {
-  const rawClientId = req.headers['x-sync-client-id'];
+  const rawClientId = req.headers[config.CLIENT_ID_HEADER];
   const senderClientId = typeof rawClientId === 'string' ? rawClientId : null;
   const charId = sync.extractCharIdFromFilePath(req);
 
@@ -242,7 +242,7 @@ function proxyRemoteBlockWrite(req: http.IncomingMessage, res: http.ServerRespon
 
     const seq = charId ? sync.reserveRemoteWrite(charId) : null;
     const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: config.UPSTREAM.host };
-    delete headers['x-sync-client-id'];
+    delete headers[config.CLIENT_ID_HEADER];
 
     sendUpstreamWithRetry(
       { path: req.url!, method: req.method!, headers, body: buffer },
@@ -276,7 +276,7 @@ function isProxy2Post(req: http.IncomingMessage): boolean {
 }
 
 function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void {
-  const rawClientId = req.headers['x-sync-client-id'];
+  const rawClientId = req.headers[config.CLIENT_ID_HEADER];
   const senderClientId = typeof rawClientId === 'string' ? rawClientId : 'unknown';
   const rawTargetCharId = req.headers['x-sync-proxy2-target-char'];
   const targetCharId = typeof rawTargetCharId === 'string' ? rawTargetCharId : null;
@@ -419,7 +419,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
         ...req.headers,
         host: config.UPSTREAM.host,
       };
-      delete headers['x-sync-client-id'];
+      delete headers[config.CLIENT_ID_HEADER];
       delete headers['x-sync-proxy2-target-char'];
       headers['content-length'] = String(body.length);
 
@@ -449,9 +449,9 @@ const server = http.createServer((req, res) => {
     || crypto.randomBytes(8).toString('hex');
   req.headers['x-request-id'] = rid;
 
-  // Ensure x-sync-client-id is always present — client patch may not be loaded
-  if (typeof req.headers['x-sync-client-id'] !== 'string') {
-    req.headers['x-sync-client-id'] = `srv-${crypto.randomBytes(8).toString('hex')}`;
+  // Ensure client ID header is always present — client patch may not be loaded
+  if (typeof req.headers[config.CLIENT_ID_HEADER] !== 'string') {
+    req.headers[config.CLIENT_ID_HEADER] = `srv-${crypto.randomBytes(8).toString('hex')}`;
   }
 
   res.on('finish', () => {

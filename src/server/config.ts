@@ -38,3 +38,6 @@ export const LOG_LEVEL = (process.env.LOG_LEVEL || 'info').toLowerCase();
 export const RETRY_MAX_ATTEMPTS = parseInt(process.env.RETRY_MAX_ATTEMPTS || '2', 10);
 export const RETRY_BASE_DELAY_MS = parseInt(process.env.RETRY_BASE_DELAY_MS || '500', 10);
 export const SCRIPT_TAG = '<script defer src="/sync/client.js"></script>';
+
+/** 프록시 모듈 간 공유하는 클라이언트 식별 헤더 */
+export const CLIENT_ID_HEADER = 'x-proxy-client-id';

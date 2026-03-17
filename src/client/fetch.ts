@@ -1,4 +1,4 @@
-import { CLIENT_ID } from './config';
+import { CLIENT_ID, CLIENT_ID_HEADER } from './config';
 import { state } from './state';
 import type { StreamState } from './state';
 import { showWriteFailedNotification } from './notification';
@@ -100,9 +100,9 @@ async function fetchWriteWithRetry(input: RequestInfo | URL, init: RequestInit):
 }
 
 const patchedFetch: typeof fetch = function (input, init) {
-  // POST /api/write 시 x-sync-client-id 헤더 추가 + 재시도 래핑
+  // POST /api/write 시 클라이언트 ID 헤더 추가 + 재시도 래핑
   if (init && init.method === 'POST' && input === '/api/write' && init.headers) {
-    setHeader(init.headers, 'x-sync-client-id', CLIENT_ID);
+    setHeader(init.headers, CLIENT_ID_HEADER, CLIENT_ID);
 
     // Remote block write dedup: 해시가 동일하면 요청 자체를 보내지 않음
     const charId = extractRemoteCharId(init.headers);
@@ -142,7 +142,7 @@ const patchedFetch: typeof fetch = function (input, init) {
     }
 
     if (!init.headers) init.headers = {};
-    setHeader(init.headers, 'x-sync-client-id', CLIENT_ID);
+    setHeader(init.headers, CLIENT_ID_HEADER, CLIENT_ID);
     if (target) {
       setHeader(init.headers, 'x-sync-proxy2-target-char', target);
     }
