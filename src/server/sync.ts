@@ -58,6 +58,11 @@ export function initClientRootCache(clientId: string): void {
   }
 }
 
+/** hex file-path 디코딩 (로깅용으로 export) */
+export function hexDecodeFilePath(hex: string): string {
+  return hexDecode(hex);
+}
+
 /** DB write 감지 */
 function hexDecode(hex: string): string {
   let s = '';
