@@ -449,6 +449,11 @@ const server = http.createServer((req, res) => {
     || crypto.randomBytes(8).toString('hex');
   req.headers['x-request-id'] = rid;
 
+  // Ensure x-sync-client-id is always present — client patch may not be loaded
+  if (typeof req.headers['x-sync-client-id'] !== 'string') {
+    req.headers['x-sync-client-id'] = `srv-${crypto.randomBytes(8).toString('hex')}`;
+  }
+
   res.on('finish', () => {
     const duration = (performance.now() - reqStart).toFixed(0);
     const logFields: Record<string, string | undefined> = { rid, method: req.method, url: req.url, status: String(res.statusCode), ms: duration };
