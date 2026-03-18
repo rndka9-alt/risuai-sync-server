@@ -529,6 +529,15 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    // /sync/client.js, /sync/health 이외의 엔드포인트는 인증 필요
+    const authHeader = req.headers.authorization;
+    const bearerToken = typeof authHeader === 'string' ? authHeader.replace(/^Bearer\s+/i, '') : '';
+    const token = url.searchParams.get('token') || bearerToken;
+    if (token !== config.SYNC_TOKEN) {
+      sendJson(res, 401, { error: 'unauthorized' });
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/sync/block') {
       const name = url.searchParams.get('name');
       if (!name) {

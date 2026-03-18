@@ -1,4 +1,4 @@
-import { SYNC_TOKEN, CLIENT_ID } from './config';
+import { SYNC_TOKEN, CLIENT_ID, syncFetch } from './config';
 import { state, MAX_RECONNECT_DELAY } from './state';
 import { catchUpFromServer, restoreActiveStreams, handleBlocksChanged, handleStreamStart, handleStreamData, handleStreamEnd } from './sync';
 import { showNotification, showWriteFailedNotification } from './notification';
@@ -36,7 +36,7 @@ export function connect(): void {
 
     if (state.isFirstConnect) {
       // 첫 연결: 현재 버전 + epoch 가져옴
-      fetch('/sync/changes?since=0&clientId=' + encodeURIComponent(CLIENT_ID))
+      syncFetch('/sync/changes?since=0&clientId=' + encodeURIComponent(CLIENT_ID))
         .then((r) => r.json() as Promise<ChangesResponse>)
         .then((data) => {
           state.epoch = data.epoch;

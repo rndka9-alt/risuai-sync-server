@@ -1,6 +1,6 @@
 import { BLOCK_TYPE, isSyncedRootKey } from '../shared/blockTypes';
 import type { BlockChange, BlocksChangedMessage, ChangesResponse, ChangeLogEntry, PendingStream, StreamStartMessage, StreamDataMessage, StreamEndMessage } from '../shared/types';
-import { CLIENT_ID } from './config';
+import { CLIENT_ID, syncFetch } from './config';
 import { state } from './state';
 import type { StreamState } from './state';
 import { showNotification } from './notification';
@@ -44,7 +44,7 @@ declare var __pluginApis__: PluginApis | undefined;
 
 /** Catch-up: 놓친 변경분 복구 */
 export function catchUpFromServer(): void {
-  fetch('/sync/changes?since=' + state.lastVersion + '&clientId=' + encodeURIComponent(CLIENT_ID))
+  syncFetch('/sync/changes?since=' + state.lastVersion + '&clientId=' + encodeURIComponent(CLIENT_ID))
     .then((r) => {
       if (r.status === 410) {
         showNotification();
@@ -176,14 +176,14 @@ export function handleBlocksChanged(msg: BlocksChangedMessage): void {
 
   // 캐릭터 블록 + safe ROOT 블록 병렬 fetch
   const charFetches: Promise<CharFetchResult>[] = charBlocks.map((b) =>
-    fetch('/sync/block?name=' + encodeURIComponent(b.name))
+    syncFetch('/sync/block?name=' + encodeURIComponent(b.name))
       .then((r) => (r.ok ? r.json() as Promise<RisuCharacter> : null))
       .then((data): CharFetchResult => ({ type: 'char', name: b.name, block: b, data }))
       .catch((): CharFetchResult => ({ type: 'char', name: b.name, block: b, data: null })),
   );
 
   const rootFetches: Promise<RootFetchResult>[] = safeRootBlocks.map((b) =>
-    fetch('/sync/block?name=' + encodeURIComponent(b.name))
+    syncFetch('/sync/block?name=' + encodeURIComponent(b.name))
       .then((r) => (r.ok ? r.json() as Promise<Record<string, unknown>> : null))
       .then((data): RootFetchResult => ({ type: 'root', name: b.name, block: b, data }))
       .catch((): RootFetchResult => ({ type: 'root', name: b.name, block: b, data: null })),
@@ -447,7 +447,7 @@ function sendAck(streamId: string): void {
 
 /** reconnect 시 서버의 활성 스트림 목록으로 activeStreams 복원 (중복 요청 차단용) */
 export function restoreActiveStreams(): void {
-  fetch('/sync/streams/active')
+  syncFetch('/sync/streams/active')
     .then((r) => r.json() as Promise<{ streams: ReadonlyArray<{ id: string; targetCharId: string | null }> }>)
     .then((data) => {
       if (!data.streams || !data.streams.length) return;
