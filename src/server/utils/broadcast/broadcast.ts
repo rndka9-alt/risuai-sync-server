@@ -4,7 +4,7 @@ import * as config from '../../config';
 
 export function broadcast(payload: ServerMessage, excludeClientId: string | null): void {
   const data = JSON.stringify(payload);
-  for (const [id, client] of clients!) {
+  for (const [id, client] of clients) {
     if (id !== excludeClientId && client.readyState === 1) {
       client.send(data);
     }

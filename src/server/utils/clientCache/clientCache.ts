@@ -1,10 +1,5 @@
 import * as cache from '../../cache';
-import { setClients, clientRootCache, clientDisconnectedAt } from '../../serverState';
-import type WebSocket from 'ws';
-
-export function init(clientsMap: Map<string, WebSocket>): void {
-  setClients(clientsMap);
-}
+import { clientRootCache, clientDisconnectedAt } from '../../serverState';
 
 export function removeClientCache(clientId: string): void {
   clientDisconnectedAt.set(clientId, Date.now());

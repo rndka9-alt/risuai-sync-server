@@ -177,13 +177,14 @@ describe('processDbWrite', () => {
     cache = await import('./cache');
     sync = await import('./sync');
 
+    const serverState = await import('./serverState');
+    serverState.clients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
-    const clients = new Map<string, ReturnType<typeof createMockWs>>();
-    clients.set('client-a', clientA);
-    clients.set('client-b', clientB);
     // @ts-expect-error partial WebSocket mock
-    sync.init(clients);
+    serverState.clients.set('client-a', clientA);
+    // @ts-expect-error partial WebSocket mock
+    serverState.clients.set('client-b', clientB);
   });
 
   it('initializes cache on first write without broadcasting', () => {
@@ -375,13 +376,14 @@ describe('processRemoteBlockWrite', () => {
     cache = await import('./cache');
     sync = await import('./sync');
 
+    const serverState = await import('./serverState');
+    serverState.clients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
-    const clients = new Map<string, ReturnType<typeof createMockWs>>();
-    clients.set('client-a', clientA);
-    clients.set('client-b', clientB);
     // @ts-expect-error partial WebSocket mock
-    sync.init(clients);
+    serverState.clients.set('client-a', clientA);
+    // @ts-expect-error partial WebSocket mock
+    serverState.clients.set('client-b', clientB);
   });
 
   it('caches but does not broadcast before cache init', () => {
@@ -445,13 +447,14 @@ describe('clientRootCache cleanup', () => {
     cache = await import('./cache');
     sync = await import('./sync');
 
+    const serverState = await import('./serverState');
+    serverState.clients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
-    const clients = new Map<string, ReturnType<typeof createMockWs>>();
-    clients.set('client-a', clientA);
-    clients.set('client-b', clientB);
     // @ts-expect-error partial WebSocket mock
-    sync.init(clients);
+    serverState.clients.set('client-a', clientA);
+    // @ts-expect-error partial WebSocket mock
+    serverState.clients.set('client-b', clientB);
   });
 
   afterEach(() => {
@@ -528,13 +531,14 @@ describe('streaming', () => {
     await import('./cache');
     sync = await import('./sync');
 
+    const serverState = await import('./serverState');
+    serverState.clients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
-    const clients = new Map<string, ReturnType<typeof createMockWs>>();
-    clients.set('client-a', clientA);
-    clients.set('client-b', clientB);
     // @ts-expect-error partial WebSocket mock
-    sync.init(clients);
+    serverState.clients.set('client-a', clientA);
+    // @ts-expect-error partial WebSocket mock
+    serverState.clients.set('client-b', clientB);
   });
 
   it('createStream broadcasts stream-start to non-sender', () => {
@@ -683,13 +687,14 @@ describe('broadcastResponseCompleted', () => {
     await import('./cache');
     sync = await import('./sync');
 
+    const serverState = await import('./serverState');
+    serverState.clients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
-    const clients = new Map<string, ReturnType<typeof createMockWs>>();
-    clients.set('client-a', clientA);
-    clients.set('client-b', clientB);
     // @ts-expect-error partial WebSocket mock
-    sync.init(clients);
+    serverState.clients.set('client-a', clientA);
+    // @ts-expect-error partial WebSocket mock
+    serverState.clients.set('client-b', clientB);
   });
 
   it('broadcasts stream-end with text to non-sender', () => {
@@ -734,13 +739,14 @@ describe('write ordering (DB)', () => {
     cache = await import('./cache');
     sync = await import('./sync');
 
+    const serverState = await import('./serverState');
+    serverState.clients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
-    const clients = new Map<string, ReturnType<typeof createMockWs>>();
-    clients.set('client-a', clientA);
-    clients.set('client-b', clientB);
     // @ts-expect-error partial WebSocket mock
-    sync.init(clients);
+    serverState.clients.set('client-a', clientA);
+    // @ts-expect-error partial WebSocket mock
+    serverState.clients.set('client-b', clientB);
 
     // Init cache
     sync.processDbWrite(buildRisuSave(
@@ -811,13 +817,14 @@ describe('write ordering (remote block)', () => {
     cache = await import('./cache');
     sync = await import('./sync');
 
+    const serverState = await import('./serverState');
+    serverState.clients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
-    const clients = new Map<string, ReturnType<typeof createMockWs>>();
-    clients.set('client-a', clientA);
-    clients.set('client-b', clientB);
     // @ts-expect-error partial WebSocket mock
-    sync.init(clients);
+    serverState.clients.set('client-a', clientA);
+    // @ts-expect-error partial WebSocket mock
+    serverState.clients.set('client-b', clientB);
 
     // Init cache
     sync.processDbWrite(buildRisuSave(
@@ -873,13 +880,14 @@ describe('zombie stream cleanup', () => {
     await import('./cache');
     sync = await import('./sync');
 
+    const serverState = await import('./serverState');
+    serverState.clients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
-    const clients = new Map<string, ReturnType<typeof createMockWs>>();
-    clients.set('client-a', clientA);
-    clients.set('client-b', clientB);
     // @ts-expect-error partial WebSocket mock
-    sync.init(clients);
+    serverState.clients.set('client-a', clientA);
+    // @ts-expect-error partial WebSocket mock
+    serverState.clients.set('client-b', clientB);
   });
 
   afterEach(() => {

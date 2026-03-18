@@ -13,13 +13,9 @@ import { decodeProxy2Headers, forwardToLlm, isPrivateHost } from './llm-proxy';
 import * as streamBuffer from './stream-buffer';
 import { parseRisuSaveBlocks } from './parser';
 import { BLOCK_TYPE } from '../shared/blockTypes';
+import { clients, aliveState } from './serverState';
 
-/** WebSocket 연결 관리 */
-const clients = new Map<string, WebSocket>();
-const aliveState = new WeakMap<WebSocket, boolean>();
 const wss = new WebSocketServer({ noServer: true });
-
-sync.init(clients);
 
 wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   const url = new URL(req.url!, `http://${req.headers.host}`);

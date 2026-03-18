@@ -52,8 +52,8 @@ export function processRemoteBlockWrite(
     senderClientId,
   );
 
-  if (senderClientId && clients!.has(senderClientId)) {
-    const senderWs = clients!.get(senderClientId)!;
+  if (senderClientId && clients.has(senderClientId)) {
+    const senderWs = clients.get(senderClientId)!;
     if (senderWs.readyState === 1) {
       senderWs.send(JSON.stringify({ type: 'version-update', epoch: cache.epoch, version } satisfies ServerMessage));
     }

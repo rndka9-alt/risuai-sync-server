@@ -4,9 +4,8 @@ import * as logger from './logger';
 
 // ─── WebSocket 클라이언트 ─────────────────────────────────────────
 
-/** server/index.ts 에서 init()으로 주입 */
-export let clients: Map<string, WebSocket> | null = null;
-export function setClients(c: Map<string, WebSocket>): void { clients = c; }
+export const clients = new Map<string, WebSocket>();
+export const aliveState = new WeakMap<WebSocket, boolean>();
 
 // ─── Per-client ROOT 캐시 (echo 방지) ─────────────────────────────
 
