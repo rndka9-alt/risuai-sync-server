@@ -109,7 +109,7 @@ export function catchUpFromServer(): void {
  * ROOT 블록이 live-apply 가능한지 확인.
  * changedKeys가 모두 SYNCED이고 unknown 키 없음 → safe
  */
-function isRootSafeChange(block: BlockChange): boolean {
+export function isRootSafeChange(block: BlockChange): boolean {
   if (!block.changedKeys || !Array.isArray(block.changedKeys)) return false;
   if (block.changedKeys.length === 0) return false;
   if (block.hasUnknownKeys) return false;
@@ -117,7 +117,7 @@ function isRootSafeChange(block: BlockChange): boolean {
 }
 
 /** ROOT safe key 라이브 적용 */
-function applyRootSafeKeys(db: RisuDatabase, rootData: Record<string, unknown>, keys: string[]): void {
+export function applyRootSafeKeys(db: RisuDatabase, rootData: Record<string, unknown>, keys: string[]): void {
   for (const key of keys) {
     if (rootData[key] !== undefined) {
       db[key] = rootData[key];
@@ -128,6 +128,36 @@ function applyRootSafeKeys(db: RisuDatabase, rootData: Record<string, unknown>, 
 /** fetch 결과 타입 */
 type CharFetchResult = { type: 'char'; name: string; block: BlockChange; data: RisuCharacter | null };
 type RootFetchResult = { type: 'root'; name: string; block: BlockChange; data: Record<string, unknown> | null };
+
+/** changed 블록을 캐릭터/safeRoot/reload로 분류 */
+export function classifyChangedBlocks(changed: BlockChange[]): {
+  charBlocks: BlockChange[];
+  safeRootBlocks: BlockChange[];
+  needsReload: boolean;
+} {
+  const charBlocks = changed
+    .filter((b) => b.type === BLOCK_TYPE.WITH_CHAT || b.type === BLOCK_TYPE.WITHOUT_CHAT);
+
+  const safeRootBlocks: BlockChange[] = [];
+  let needsReload = false;
+
+  changed.forEach((b) => {
+    if (b.type === BLOCK_TYPE.CONFIG || b.type === BLOCK_TYPE.BOTPRESET || b.type === BLOCK_TYPE.MODULES) return;
+    if (b.type === BLOCK_TYPE.WITH_CHAT || b.type === BLOCK_TYPE.WITHOUT_CHAT) return;
+    if (b.type === BLOCK_TYPE.ROOT && isRootSafeChange(b)) {
+      if (b.changedKeys!.every((k) => PLUGIN_WRITABLE_KEYS.has(k))) {
+        safeRootBlocks.push(b);
+      } else {
+        needsReload = true;
+      }
+      return;
+    }
+    // 그 외 (unsafe ROOT 등) → reload
+    needsReload = true;
+  });
+
+  return { charBlocks, safeRootBlocks, needsReload };
+}
 
 /** 블록 단위 동기화 핸들러 */
 export function handleBlocksChanged(msg: BlocksChangedMessage): void {
@@ -150,29 +180,8 @@ export function handleBlocksChanged(msg: BlocksChangedMessage): void {
     return;
   }
 
-  let needsReload = false;
-
-  // 기존 캐릭터 수정만 블록 동기화 (type 2=WITH_CHAT, 7=WITHOUT_CHAT)
-  const charBlocks = (msg.changed || [])
-    .filter((b) => b.type === BLOCK_TYPE.WITH_CHAT || b.type === BLOCK_TYPE.WITHOUT_CHAT);
-
-  // ROOT 블록 중 safe key만 변경된 것 분류
-  const safeRootBlocks: BlockChange[] = [];
-
-  (msg.changed || []).forEach((b) => {
-    if (b.type === BLOCK_TYPE.CONFIG || b.type === BLOCK_TYPE.BOTPRESET || b.type === BLOCK_TYPE.MODULES) return;
-    if (b.type === BLOCK_TYPE.WITH_CHAT || b.type === BLOCK_TYPE.WITHOUT_CHAT) return;
-    if (b.type === BLOCK_TYPE.ROOT && isRootSafeChange(b)) {
-      if (b.changedKeys!.every((k) => PLUGIN_WRITABLE_KEYS.has(k))) {
-        safeRootBlocks.push(b);
-      } else {
-        needsReload = true;
-      }
-      return;
-    }
-    // 그 외 (unsafe ROOT, BOTPRESET, MODULES 등) → reload
-    needsReload = true;
-  });
+  const { charBlocks, safeRootBlocks, needsReload: classifiedReload } = classifyChangedBlocks(msg.changed || []);
+  let needsReload = classifiedReload;
 
   // 캐릭터 블록 + safe ROOT 블록 병렬 fetch
   const charFetches: Promise<CharFetchResult>[] = charBlocks.map((b) =>
@@ -229,7 +238,7 @@ export function handleBlocksChanged(msg: BlocksChangedMessage): void {
 
 /** Stream sync: 다른 기기의 스트리밍 텍스트를 적용한다 */
 
-function resolveStreamTarget(streamState: StreamState, db: RisuDatabase): boolean {
+export function resolveStreamTarget(streamState: StreamState, db: RisuDatabase): boolean {
   if (streamState.resolved) return true;
   if (!streamState.targetCharId) return false;
 
@@ -270,7 +279,7 @@ function resolveStreamTarget(streamState: StreamState, db: RisuDatabase): boolea
   return true;
 }
 
-function resolveStreamFromDb(streamState: StreamState, db: RisuDatabase): boolean {
+export function resolveStreamFromDb(streamState: StreamState, db: RisuDatabase): boolean {
   if (streamState.resolved) return true;
 
   // Search for a character with isStreaming === true
@@ -294,7 +303,7 @@ function resolveStreamFromDb(streamState: StreamState, db: RisuDatabase): boolea
   return false;
 }
 
-function applyStreamText(streamState: StreamState, db: RisuDatabase): void {
+export function applyStreamText(streamState: StreamState, db: RisuDatabase): void {
   const char = db.characters[streamState.targetCharIndex];
   if (!char) return;
   const chats = (char as Record<string, unknown>).chats as Array<{ message?: Array<Record<string, unknown>>; isStreaming?: boolean }> | undefined;
