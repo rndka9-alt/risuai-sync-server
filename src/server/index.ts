@@ -7,13 +7,14 @@ import * as config from './config';
 import * as cache from './cache';
 import * as sync from './sync';
 import { buildClientJs, clientBundleHash } from './client-bundle';
-import type { ClientMessage, HealthResponse, ServerMessage } from '../shared/types';
+import type { ClientMessage, HealthResponse } from '../shared/types';
 import * as logger from './logger';
 import { decodeProxy2Headers, forwardToLlm, isPrivateHost } from './llm-proxy';
 import * as streamBuffer from './stream-buffer';
-import { parseRisuSaveBlocks } from './parser';
 import { BLOCK_TYPE } from '../shared/blockTypes';
-import { clients, aliveState } from './serverState';
+import { clients, aliveState, freshClients } from './serverState';
+import { extractUsePlainFetchFromBuffer, getUsePlainFetch, needsExtraction } from './usePlainFetchCache';
+import { sendJson, notifyWriteFailed, sendUpstreamWithRetry, proxyRequest } from './handlers/helpers';
 
 const wss = new WebSocketServer({ noServer: true });
 
@@ -33,6 +34,11 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
       if (msg.type === 'init') {
         // 클라이언트 첫 연결: 글로벌 ROOT 캐시를 per-client 캐시로 복사 (echo 방지 baseline)
         sync.initClientRootCache(clientId);
+        return;
+      }
+      if (msg.type === 'caught-up') {
+        freshClients.add(clientId);
+        logger.info('Client caught up (fresh)', { clientId });
         return;
       }
       if (msg.type === 'stream-ack') {
@@ -64,6 +70,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
     if (clients.get(clientId) === ws) {
       clients.delete(clientId);
     }
+    freshClients.delete(clientId);
     sync.removeClientCache(clientId);
     logger.info('Client disconnected', { clientId, total: String(clients.size) });
   });
@@ -82,137 +89,6 @@ const heartbeatInterval = setInterval(() => {
 }, 30000);
 
 wss.on('close', () => clearInterval(heartbeatInterval));
-
-/** usePlainFetch 캐시 — read tee 또는 write 경로에서 채워짐 */
-let cachedUsePlainFetch: boolean | null = null;
-
-function extractUsePlainFetchFromBuffer(buffer: Buffer): void {
-  const parsed = parseRisuSaveBlocks(buffer);
-  if (!parsed) return;
-  const rootBlock = parsed.blocks.get('root');
-  if (!rootBlock) return;
-  try {
-    const root: Record<string, unknown> = JSON.parse(rootBlock.json);
-    if (typeof root.usePlainFetch === 'boolean') {
-      cachedUsePlainFetch = root.usePlainFetch;
-    }
-  } catch { /* ignore */ }
-}
-
-function getUsePlainFetch(): boolean | null {
-  if (cachedUsePlainFetch !== null) return cachedUsePlainFetch;
-  // Fallback: write 경로에서 채워진 dataCache
-  const rootData = cache.dataCache.get('root');
-  if (rootData) {
-    try {
-      const parsed: Record<string, unknown> = JSON.parse(rootData);
-      if (typeof parsed.usePlainFetch === 'boolean') {
-        cachedUsePlainFetch = parsed.usePlainFetch;
-        return cachedUsePlainFetch;
-      }
-    } catch { /* ignore */ }
-  }
-  return null;
-}
-
-/** HTTP 유틸 */
-function sendJson(res: http.ServerResponse, statusCode: number, data: object): void {
-  const body = JSON.stringify(data);
-  res.writeHead(statusCode, {
-    'content-type': 'application/json',
-    'content-length': Buffer.byteLength(body),
-  });
-  res.end(body);
-}
-
-/** Write 실패 시 WebSocket으로 sender에게 알림 */
-function notifyWriteFailed(senderClientId: string | null, path: string, attempts: number): void {
-  if (!senderClientId) return;
-  const ws = clients.get(senderClientId);
-  if (!ws || ws.readyState !== 1) return;
-  const msg: ServerMessage = {
-    type: 'write-failed',
-    path,
-    attempts,
-    timestamp: Date.now(),
-  };
-  ws.send(JSON.stringify(msg));
-}
-
-/** Upstream 프록시 + 재시도 (buffered body 전용) */
-function sendUpstreamWithRetry(
-  options: {
-    path: string;
-    method: string;
-    headers: Record<string, string | string[] | undefined>;
-    body: Buffer;
-  },
-  onResponse: (proxyRes: http.IncomingMessage) => void,
-  onAllFailed: () => void,
-  attempt: number = 0,
-): void {
-  const proxyReq = http.request(
-    {
-      hostname: config.UPSTREAM.hostname,
-      port: config.UPSTREAM.port,
-      path: options.path,
-      method: options.method,
-      headers: options.headers,
-    },
-    onResponse,
-  );
-
-  proxyReq.on('error', (err) => {
-    if (attempt < config.RETRY_MAX_ATTEMPTS) {
-      const delay = config.RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
-      logger.warn('Upstream error, retrying', {
-        attempt: String(attempt + 1),
-        maxAttempts: String(config.RETRY_MAX_ATTEMPTS),
-        delay: `${delay}ms`,
-        error: err.message,
-        path: options.path,
-      });
-      setTimeout(() => sendUpstreamWithRetry(options, onResponse, onAllFailed, attempt + 1), delay);
-    } else {
-      logger.error('Upstream error, all retries exhausted', {
-        attempts: String(attempt + 1),
-        error: err.message,
-        path: options.path,
-      });
-      onAllFailed();
-    }
-  });
-
-  proxyReq.write(options.body);
-  proxyReq.end();
-}
-
-function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-  const t0 = performance.now();
-  const rid = req.headers[config.REQUEST_ID_HEADER] || '';
-
-  const proxyReq = http.request(
-    {
-      hostname: config.UPSTREAM.hostname,
-      port: config.UPSTREAM.port,
-      path: req.url,
-      method: req.method,
-      headers: { ...req.headers, host: config.UPSTREAM.host },
-    },
-    (proxyRes) => {
-      logger.debug('upstream TTFB', { rid, url: req.url, ms: (performance.now() - t0).toFixed(0) });
-      res.writeHead(proxyRes.statusCode!, proxyRes.headers);
-      proxyRes.pipe(res);
-    },
-  );
-  req.pipe(proxyReq);
-  proxyReq.on('error', () => {
-    if (!res.headersSent) {
-      res.writeHead(502, { 'content-type': 'text/plain' });
-    }
-    res.end('Bad Gateway');
-  });
-}
 
 function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void {
   const rawClientId = req.headers[config.CLIENT_ID_HEADER];
@@ -267,7 +143,7 @@ function proxyRemoteBlockWrite(req: http.IncomingMessage, res: http.ServerRespon
   const chunks: Buffer[] = [];
   req.on('data', (chunk: Buffer) => chunks.push(chunk));
   req.on('end', () => {
-    const buffer = Buffer.concat(chunks);
+    let buffer = Buffer.concat(chunks);
 
     if (sync.isWriteBlockedByStream(senderClientId)) {
       logger.warn('Remote write blocked (streaming in progress)', { sender: senderClientId || 'unknown' });
@@ -275,10 +151,19 @@ function proxyRemoteBlockWrite(req: http.IncomingMessage, res: http.ServerRespon
       return;
     }
 
+    // Stale 클라이언트: 서버 캐시와 union merge하여 데이터 소실 방지
+    if (charId && senderClientId && !sync.isClientFresh(senderClientId)) {
+      const merged = sync.mergeRemoteBlock(charId, buffer);
+      if (merged) {
+        buffer = merged;
+      }
+    }
+
     const seq = charId ? sync.reserveRemoteWrite(charId) : null;
     const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: config.UPSTREAM.host };
     delete headers[config.CLIENT_ID_HEADER];
     delete headers['x-sync-client-id'];
+    headers['content-length'] = String(buffer.length);
 
     sendUpstreamWithRetry(
       { path: req.url!, method: req.method!, headers, body: buffer },
@@ -803,7 +688,7 @@ const server = http.createServer((req, res) => {
   }
 
   // --- database.bin read → streaming tee (usePlainFetch 추출) ---
-  if (sync.isDbRead(req) && cachedUsePlainFetch === null) {
+  if (sync.isDbRead(req) && needsExtraction()) {
     const proxyReq = http.request(
       {
         hostname: config.UPSTREAM.hostname,

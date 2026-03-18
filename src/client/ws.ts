@@ -1,6 +1,6 @@
 import { SYNC_TOKEN, CLIENT_ID, syncFetch } from './config';
 import { state, MAX_RECONNECT_DELAY } from './state';
-import { catchUpFromServer, restoreActiveStreams, handleBlocksChanged, handleStreamStart, handleStreamData, handleStreamEnd } from './sync';
+import { catchUpFromServer, sendCaughtUp, restoreActiveStreams, handleBlocksChanged, handleStreamStart, handleStreamData, handleStreamEnd } from './sync';
 import { showNotification, showWriteFailedNotification } from './notification';
 import type { ServerMessage, ChangesResponse } from '../shared/types';
 
@@ -41,6 +41,7 @@ export function connect(): void {
         .then((data) => {
           state.epoch = data.epoch;
           state.lastVersion = data.version;
+          sendCaughtUp();
         })
         .catch(() => {});
       state.isFirstConnect = false;

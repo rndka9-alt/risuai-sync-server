@@ -1,0 +1,1 @@
+export { isClientFresh } from './freshness';

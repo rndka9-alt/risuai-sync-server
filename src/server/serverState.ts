@@ -7,6 +7,10 @@ import * as logger from './logger';
 export const clients = new Map<string, WebSocket>();
 export const aliveState = new WeakMap<WebSocket, boolean>();
 
+// ─── Client freshness (stale write 보호) ─────────────────────────
+/** catch-up 완료된 클라이언트 — 이 Set에 없으면 stale로 간주하여 write 시 merge 적용 */
+export const freshClients = new Set<string>();
+
 // ─── Per-client ROOT 캐시 (echo 방지) ─────────────────────────────
 
 /**

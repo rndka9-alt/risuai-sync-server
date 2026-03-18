@@ -179,6 +179,7 @@ describe('processDbWrite', () => {
 
     const serverState = await import('./serverState');
     serverState.clients.clear();
+    serverState.freshClients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
     // @ts-expect-error partial WebSocket mock
@@ -291,7 +292,9 @@ describe('processDbWrite', () => {
     expect(msg.added[0].type).toBe(BLOCK_TYPE.WITHOUT_CHAT);
   });
 
-  it('detects character deletion via sender __directory change', () => {
+  it('detects character deletion via sender __directory change', async () => {
+    const serverState = await import('./serverState');
+
     // Init with 2 characters
     const root1 = JSON.stringify({ __directory: ['char1', 'char2'], saveTime: 1 });
     sync.processDbWrite(buildRisuSave(buildBlock(BLOCK_TYPE.ROOT, 'root', root1)), 'client-a');
@@ -301,6 +304,9 @@ describe('processDbWrite', () => {
     sync.processDbWrite(buildRisuSave(buildBlock(BLOCK_TYPE.ROOT, 'root', root2)), 'client-a');
     clearSent(clientA);
     clearSent(clientB);
+
+    // Mark client-a as fresh (caught-up) — directory deletion only trusted from fresh clients
+    serverState.freshClients.add('client-a');
 
     // Third write: char2 removed
     const root3 = JSON.stringify({ __directory: ['char1'], saveTime: 3 });
@@ -378,6 +384,7 @@ describe('processRemoteBlockWrite', () => {
 
     const serverState = await import('./serverState');
     serverState.clients.clear();
+    serverState.freshClients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
     // @ts-expect-error partial WebSocket mock
@@ -449,6 +456,7 @@ describe('clientRootCache cleanup', () => {
 
     const serverState = await import('./serverState');
     serverState.clients.clear();
+    serverState.freshClients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
     // @ts-expect-error partial WebSocket mock
@@ -461,7 +469,9 @@ describe('clientRootCache cleanup', () => {
     vi.useRealTimers();
   });
 
-  it('preserves cache for quick reconnection', () => {
+  it('preserves cache for quick reconnection', async () => {
+    const serverState = await import('./serverState');
+
     // Init cache + write to populate clientRootCache
     const root1 = JSON.stringify({ __directory: ['char1', 'char2'], saveTime: 1 });
     sync.processDbWrite(buildRisuSave(buildBlock(BLOCK_TYPE.ROOT, 'root', root1)), 'client-a');
@@ -472,10 +482,14 @@ describe('clientRootCache cleanup', () => {
 
     // Disconnect
     sync.removeClientCache('client-a');
+    serverState.freshClients.delete('client-a');
 
     // 1 minute later: reconnect (within 10-min TTL)
     vi.advanceTimersByTime(60_000);
     sync.initClientRootCache('client-a');
+
+    // Mark as fresh after catch-up
+    serverState.freshClients.add('client-a');
 
     // Cache should still work — delete detection uses sender's old root
     clearSent(clientA);
@@ -533,6 +547,7 @@ describe('streaming', () => {
 
     const serverState = await import('./serverState');
     serverState.clients.clear();
+    serverState.freshClients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
     // @ts-expect-error partial WebSocket mock
@@ -689,6 +704,7 @@ describe('broadcastResponseCompleted', () => {
 
     const serverState = await import('./serverState');
     serverState.clients.clear();
+    serverState.freshClients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
     // @ts-expect-error partial WebSocket mock
@@ -741,6 +757,7 @@ describe('write ordering (DB)', () => {
 
     const serverState = await import('./serverState');
     serverState.clients.clear();
+    serverState.freshClients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
     // @ts-expect-error partial WebSocket mock
@@ -819,6 +836,7 @@ describe('write ordering (remote block)', () => {
 
     const serverState = await import('./serverState');
     serverState.clients.clear();
+    serverState.freshClients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
     // @ts-expect-error partial WebSocket mock
@@ -882,6 +900,7 @@ describe('zombie stream cleanup', () => {
 
     const serverState = await import('./serverState');
     serverState.clients.clear();
+    serverState.freshClients.clear();
     clientA = createMockWs();
     clientB = createMockWs();
     // @ts-expect-error partial WebSocket mock

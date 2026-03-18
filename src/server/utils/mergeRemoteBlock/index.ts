@@ -1,0 +1,1 @@
+export { mergeRemoteBlock } from './mergeRemoteBlock';

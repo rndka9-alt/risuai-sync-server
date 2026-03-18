@@ -42,6 +42,13 @@ interface PluginApis {
 
 declare var __pluginApis__: PluginApis | undefined;
 
+/** 서버에 catch-up 완료를 알림 → fresh 상태로 전환 */
+export function sendCaughtUp(): void {
+  if (state.ws && state.ws.readyState === 1) {
+    state.ws.send(JSON.stringify({ type: 'caught-up' }));
+  }
+}
+
 /** Catch-up: 놓친 변경분 복구 */
 export function catchUpFromServer(): void {
   syncFetch('/sync/changes?since=' + state.lastVersion + '&clientId=' + encodeURIComponent(CLIENT_ID))
@@ -61,6 +68,7 @@ export function catchUpFromServer(): void {
       state.epoch = data.epoch;
       if (!data.changes || !data.changes.length) {
         state.lastVersion = data.version;
+        sendCaughtUp();
         return;
       }
       state.lastVersion = data.version;
@@ -101,6 +109,8 @@ export function catchUpFromServer(): void {
       if (data.pendingStreams && data.pendingStreams.length > 0) {
         processPendingStreams(data.pendingStreams);
       }
+
+      sendCaughtUp();
     })
     .catch(() => {});
 }

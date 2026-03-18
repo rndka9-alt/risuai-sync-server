@@ -6,6 +6,7 @@ import * as cache from '../../cache';
 import * as logger from '../../logger';
 import { clients, clientRootCache } from '../../serverState';
 import { broadcast, broadcastDbChanged } from '../broadcast';
+import { isClientFresh } from '../freshness';
 import { diffRootKeys } from './utils/diffRootKeys';
 import { diffDirectory } from './utils/diffDirectory';
 
@@ -56,8 +57,10 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
             added.push({ name: entry, type: BLOCK_TYPE.WITHOUT_CHAT });
           }
         }
+        // Stale 클라이언트의 __directory 기반 삭제를 차단:
+        // 오래된 __directory로 최근 추가된 캐릭터를 "삭제됨"으로 오판하는 것을 방지
         const senderOldRootJson = senderClientId ? clientRootCache.get(senderClientId) : undefined;
-        if (senderOldRootJson) {
+        if (senderOldRootJson && isClientFresh(senderClientId)) {
           const senderDirDiff = diffDirectory(senderOldRootJson, block.json, blockNames);
           if (senderDirDiff) {
             for (const entry of senderDirDiff.deleted) {

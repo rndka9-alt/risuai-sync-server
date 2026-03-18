@@ -77,7 +77,8 @@ export interface WriteFailedMessage {
 export type ClientMessage =
   | InitMessage
   | WriteNotifyMessage
-  | StreamAckMessage;
+  | StreamAckMessage
+  | CaughtUpMessage;
 
 export interface InitMessage {
   type: 'init';
@@ -91,6 +92,10 @@ export interface WriteNotifyMessage {
 export interface StreamAckMessage {
   type: 'stream-ack';
   streamId: string;
+}
+
+export interface CaughtUpMessage {
+  type: 'caught-up';
 }
 
 /** HTTP API 응답 */
