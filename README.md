@@ -212,6 +212,24 @@ llm-proxy ← index.ts (엔트리포인트)
 | `GET /sync/changes?since={version}&clientId={id}` | 지정 버전 이후 변경 로그 (자기 변경분 제외) |
 | `GET /sync/manifest` | 전체 블록 해시 목록 (디버깅용) |
 | `WS /sync/ws?token={token}&clientId={id}` | WebSocket 연결 |
+| `GET /.proxy/config` | 프록시 체이닝 설정 (sync 상태 + downstream 병합) |
+
+### `/.proxy/config` 체이닝 엔드포인트
+
+`/.proxy/*` 경로는 프록시 체인 전체가 공유하는 네임스페이스다.
+각 프록시 서버가 요청을 downstream으로 전달한 뒤, 응답에 자기 데이터를 merge하여 반환한다.
+
+```
+Client → sync → with-sqlite → risuai (404)
+                                 ↓
+                    { withSqlite: { ... } }   ← with-sqlite가 생성
+               ↓
+  { sync: { ... }, withSqlite: { ... } }      ← sync가 merge
+```
+
+- downstream이 404를 반환하면 `{}`에서 시작하고, 200이면 기존 JSON에 자기 키를 추가한다.
+- 프록시 수에 무관하게 클라이언트는 단일 요청으로 전체 프록시 상태를 받는다.
+- 새로운 프록시를 체인에 추가할 때 동일 패턴으로 자기 키만 merge하면 된다.
 
 ### WebSocket 메시지
 

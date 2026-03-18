@@ -613,6 +613,90 @@ const server = http.createServer((req, res) => {
     }
   }
 
+  // --- GET /.proxy/config → 체이닝 프록시 설정 ---
+  if (req.method === 'GET' && req.url === '/.proxy/config') {
+    const configReq = http.request(
+      {
+        hostname: config.UPSTREAM.hostname,
+        port: config.UPSTREAM.port,
+        path: '/.proxy/config',
+        method: 'GET',
+        headers: { ...req.headers, host: config.UPSTREAM.host },
+      },
+      (proxyRes) => {
+        const chunks: Buffer[] = [];
+        proxyRes.on('data', (chunk: Buffer) => chunks.push(chunk));
+        proxyRes.on('end', () => {
+          let upstream: Record<string, unknown> = {};
+          if (proxyRes.statusCode === 200) {
+            try {
+              const parsed: Record<string, unknown> = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+              if (typeof parsed === 'object' && parsed !== null) {
+                upstream = parsed;
+              }
+            } catch { /* start fresh */ }
+          }
+
+          // Extract usePlainFetch from cached ROOT block if available
+          let usePlainFetch: boolean | null = null;
+          const rootData = cache.dataCache.get('root');
+          if (rootData) {
+            try {
+              const parsed: Record<string, unknown> = JSON.parse(rootData);
+              if (typeof parsed.usePlainFetch === 'boolean') {
+                usePlainFetch = parsed.usePlainFetch;
+              }
+            } catch { /* ignore */ }
+          }
+
+          upstream['sync'] = {
+            clients: clients.size,
+            cacheInitialized: cache.cacheInitialized,
+            usePlainFetch,
+          };
+
+          const body = JSON.stringify(upstream);
+          res.writeHead(200, {
+            'content-type': 'application/json',
+            'content-length': String(Buffer.byteLength(body)),
+            'cache-control': 'no-cache',
+          });
+          res.end(body);
+        });
+      },
+    );
+
+    configReq.on('error', () => {
+      let usePlainFetch: boolean | null = null;
+      const rootData = cache.dataCache.get('root');
+      if (rootData) {
+        try {
+          const parsed: Record<string, unknown> = JSON.parse(rootData);
+          if (typeof parsed.usePlainFetch === 'boolean') {
+            usePlainFetch = parsed.usePlainFetch;
+          }
+        } catch { /* ignore */ }
+      }
+
+      const body = JSON.stringify({
+        sync: {
+          clients: clients.size,
+          cacheInitialized: cache.cacheInitialized,
+          usePlainFetch,
+        },
+      });
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'content-length': String(Buffer.byteLength(body)),
+        'cache-control': 'no-cache',
+      });
+      res.end(body);
+    });
+
+    configReq.end();
+    return;
+  }
+
   // --- GET / → 프록시 + HTML 주입 ---
   if (req.method === 'GET' && (req.url === '/' || req.url === '/?')) {
     const proxyReq = http.request(
