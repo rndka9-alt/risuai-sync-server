@@ -1,6 +1,7 @@
 import http from 'http';
 import * as logger from './logger';
 import { extractResponseText } from './llm-response-format/index';
+import { parseSSEDeltas } from './utils/streaming/utils/parseSSEDeltas';
 
 interface RawResponse {
   status: number;
@@ -324,28 +325,3 @@ export function _clear(): void {
   streams.clear();
 }
 
-function parseSSEDeltas(raw: string): string[] {
-  const deltas: string[] = [];
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('data: ')) continue;
-    const payload = trimmed.slice(6).trim();
-    if (payload === '[DONE]' || payload === '') continue;
-    try {
-      const json = JSON.parse(payload);
-      if (json.choices && Array.isArray(json.choices)) {
-        for (const choice of json.choices) {
-          const content = choice?.delta?.content;
-          if (typeof content === 'string') deltas.push(content);
-        }
-        continue;
-      }
-      if (json.type === 'content_block_delta') {
-        const text = json.delta?.text;
-        if (typeof text === 'string') deltas.push(text);
-        continue;
-      }
-    } catch { /* skip */ }
-  }
-  return deltas;
-}
