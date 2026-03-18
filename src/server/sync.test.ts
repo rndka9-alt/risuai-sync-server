@@ -629,6 +629,56 @@ describe('streaming', () => {
   });
 });
 
+// ─── broadcastResponseCompleted (non-SSE parcel locker) ───────────
+
+describe('broadcastResponseCompleted', () => {
+  let sync: typeof import('./sync');
+  let clientA: ReturnType<typeof createMockWs>;
+  let clientB: ReturnType<typeof createMockWs>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    await import('./cache');
+    sync = await import('./sync');
+
+    clientA = createMockWs();
+    clientB = createMockWs();
+    const clients = new Map<string, ReturnType<typeof createMockWs>>();
+    clients.set('client-a', clientA);
+    clients.set('client-b', clientB);
+    // @ts-expect-error partial WebSocket mock
+    sync.init(clients);
+  });
+
+  it('broadcasts stream-end with text to non-sender', () => {
+    sync.broadcastResponseCompleted('r1', 'client-a', 'char-1', 'Generated text');
+
+    const bMsgs = sentMessages(clientB);
+    expect(bMsgs).toHaveLength(1);
+    const msg = bMsgs[0] as { type: string; streamId: string; targetCharId: string | null; text: string };
+    expect(msg.type).toBe('stream-end');
+    expect(msg.streamId).toBe('r1');
+    expect(msg.targetCharId).toBe('char-1');
+    expect(msg.text).toBe('Generated text');
+
+    expect(clientA._sent).toHaveLength(0);
+  });
+
+  it('does not broadcast when text is empty', () => {
+    sync.broadcastResponseCompleted('r1', 'client-a', 'char-1', '');
+    expect(clientB._sent).toHaveLength(0);
+  });
+
+  it('handles null targetCharId', () => {
+    sync.broadcastResponseCompleted('r1', 'client-a', null, 'Some text');
+
+    const bMsgs = sentMessages(clientB);
+    expect(bMsgs).toHaveLength(1);
+    const msg = bMsgs[0] as { type: string; targetCharId: string | null };
+    expect(msg.targetCharId).toBeNull();
+  });
+});
+
 // ─── Write Order Queue Integration ────────────────────────────────
 
 describe('write ordering (DB)', () => {

@@ -352,7 +352,18 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
           resChunks.push(chunk);
         });
         proxyRes.on('end', () => {
-          streamBuffer.storeResponse(nonStreamId, senderClientId, targetCharId, proxyRes.statusCode!, proxyRes.headers, Buffer.concat(resChunks));
+          const responseBody = Buffer.concat(resChunks);
+          const extractedText = streamBuffer.storeResponse(
+            nonStreamId, senderClientId, targetCharId,
+            proxyRes.statusCode!, proxyRes.headers, responseBody,
+          );
+
+          if (extractedText) {
+            sync.broadcastResponseCompleted(
+              nonStreamId, senderClientId, targetCharId, extractedText,
+            );
+          }
+
           if (!clientDisconnected && !res.writableEnded) res.end();
         });
         return;

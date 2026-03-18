@@ -199,13 +199,18 @@ export function storeResponse(
   status: number,
   headers: http.IncomingHttpHeaders,
   body: Buffer,
-): void {
+): string {
+  const contentType = typeof headers['content-type'] === 'string'
+    ? headers['content-type']
+    : undefined;
+  const extractedText = parseNonSSEResponseText(status, contentType, body);
+
   streams.set(id, {
     id,
     senderClientId,
     targetCharId,
     upstreamReq: null,
-    accumulatedText: '',
+    accumulatedText: extractedText,
     lineBuffer: '',
     status: 'completed',
     subscribers: new Set(),
@@ -213,6 +218,8 @@ export function storeResponse(
     completedAt: Date.now(),
     rawResponse: { status, headers, body },
   });
+
+  return extractedText;
 }
 
 /**
@@ -314,6 +321,50 @@ export function getCompletedPending(): Array<{
 /** For testing */
 export function _clear(): void {
   streams.clear();
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+/** Non-SSE 응답 body에서 생성 텍스트 추출 (OpenAI / Anthropic) */
+export function parseNonSSEResponseText(
+  status: number,
+  contentType: string | undefined,
+  body: Buffer,
+): string {
+  if (status !== 200) return '';
+  if (!contentType || !contentType.includes('application/json')) return '';
+
+  try {
+    const json: Record<string, unknown> = JSON.parse(body.toString('utf-8'));
+
+    // OpenAI: { choices: [{ message: { content: "text" } }] }
+    if (Array.isArray(json.choices)) {
+      for (const choice of json.choices) {
+        if (!isRecord(choice)) continue;
+        const message = choice.message;
+        if (!isRecord(message)) continue;
+        if (typeof message.content === 'string') return message.content;
+      }
+    }
+
+    // Anthropic: { content: [{ type: "text", text: "text" }] }
+    if (Array.isArray(json.content)) {
+      const parts: string[] = [];
+      for (const block of json.content) {
+        if (!isRecord(block)) continue;
+        if (block.type === 'text' && typeof block.text === 'string') {
+          parts.push(block.text);
+        }
+      }
+      if (parts.length > 0) return parts.join('');
+    }
+
+    return '';
+  } catch {
+    return '';
+  }
 }
 
 function parseSSEDeltas(raw: string): string[] {

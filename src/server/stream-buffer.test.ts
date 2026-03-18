@@ -453,6 +453,123 @@ describe('stream-buffer parcel locker', () => {
   });
 });
 
+// ─── parseNonSSEResponseText ──────────────────────────────────────
+
+describe('parseNonSSEResponseText', () => {
+  let sb: typeof import('./stream-buffer');
+
+  beforeEach(async () => {
+    vi.resetModules();
+    sb = await import('./stream-buffer');
+  });
+
+  it('extracts text from OpenAI response', () => {
+    const body = Buffer.from(JSON.stringify({
+      choices: [{ message: { content: 'Hello world' } }],
+    }));
+    expect(sb.parseNonSSEResponseText(200, 'application/json', body)).toBe('Hello world');
+  });
+
+  it('extracts text from Anthropic response', () => {
+    const body = Buffer.from(JSON.stringify({
+      content: [{ type: 'text', text: 'Bonjour' }],
+    }));
+    expect(sb.parseNonSSEResponseText(200, 'application/json', body)).toBe('Bonjour');
+  });
+
+  it('concatenates multiple Anthropic text blocks', () => {
+    const body = Buffer.from(JSON.stringify({
+      content: [
+        { type: 'text', text: 'Hello' },
+        { type: 'text', text: ' World' },
+      ],
+    }));
+    expect(sb.parseNonSSEResponseText(200, 'application/json', body)).toBe('Hello World');
+  });
+
+  it('returns empty for non-200 status', () => {
+    const body = Buffer.from(JSON.stringify({ choices: [{ message: { content: 'x' } }] }));
+    expect(sb.parseNonSSEResponseText(429, 'application/json', body)).toBe('');
+  });
+
+  it('returns empty for non-JSON content-type', () => {
+    const body = Buffer.from('Hello');
+    expect(sb.parseNonSSEResponseText(200, 'text/html', body)).toBe('');
+  });
+
+  it('returns empty for undefined content-type', () => {
+    const body = Buffer.from('{}');
+    expect(sb.parseNonSSEResponseText(200, undefined, body)).toBe('');
+  });
+
+  it('returns empty for malformed JSON', () => {
+    expect(sb.parseNonSSEResponseText(200, 'application/json', Buffer.from('not json{{'))).toBe('');
+  });
+
+  it('returns empty for unrecognized JSON structure', () => {
+    const body = Buffer.from(JSON.stringify({ id: '123', object: 'chat.completion' }));
+    expect(sb.parseNonSSEResponseText(200, 'application/json', body)).toBe('');
+  });
+
+  it('returns empty when content is null', () => {
+    const body = Buffer.from(JSON.stringify({ choices: [{ message: { content: null } }] }));
+    expect(sb.parseNonSSEResponseText(200, 'application/json', body)).toBe('');
+  });
+
+  it('skips Anthropic blocks with non-text type', () => {
+    const body = Buffer.from(JSON.stringify({
+      content: [{ type: 'image', source: {} }],
+    }));
+    expect(sb.parseNonSSEResponseText(200, 'application/json', body)).toBe('');
+  });
+
+  it('handles content-type with charset', () => {
+    const body = Buffer.from(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }));
+    expect(sb.parseNonSSEResponseText(200, 'application/json; charset=utf-8', body)).toBe('ok');
+  });
+});
+
+// ─── Non-SSE parcel locker integration ────────────────────────────
+
+describe('non-SSE parcel locker', () => {
+  let sb: typeof import('./stream-buffer');
+
+  beforeEach(async () => {
+    vi.resetModules();
+    sb = await import('./stream-buffer');
+    sb._clear();
+  });
+
+  it('storeResponse with valid JSON populates accumulatedText and appears in getCompletedPending', () => {
+    const body = Buffer.from(JSON.stringify({
+      choices: [{ message: { content: 'Generated text' } }],
+    }));
+    sb.storeResponse('r1', 'client-a', 'char-1', 200,
+      { 'content-type': 'application/json' }, body);
+
+    const pending = sb.getCompletedPending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].id).toBe('r1');
+    expect(pending[0].accumulatedText).toBe('Generated text');
+  });
+
+  it('storeResponse returns extracted text', () => {
+    const body = Buffer.from(JSON.stringify({
+      choices: [{ message: { content: 'Hello' } }],
+    }));
+    const result = sb.storeResponse('r1', 'client-a', 'char-1', 200,
+      { 'content-type': 'application/json' }, body);
+    expect(result).toBe('Hello');
+  });
+
+  it('storeResponse returns empty string for error responses', () => {
+    const body = Buffer.from(JSON.stringify({ error: 'rate limit' }));
+    const result = sb.storeResponse('r1', 'client-a', 'char-1', 429,
+      { 'content-type': 'application/json' }, body);
+    expect(result).toBe('');
+  });
+});
+
 // ─── SSE delta parsing ─────────────────────────────────────────────
 
 describe('SSE delta parsing edge cases', () => {
