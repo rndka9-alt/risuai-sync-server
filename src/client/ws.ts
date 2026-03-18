@@ -1,6 +1,6 @@
 import { SYNC_TOKEN, CLIENT_ID } from './config';
 import { state, MAX_RECONNECT_DELAY } from './state';
-import { catchUpFromServer, handleBlocksChanged, handleStreamStart, handleStreamData, handleStreamEnd } from './sync';
+import { catchUpFromServer, restoreActiveStreams, handleBlocksChanged, handleStreamStart, handleStreamData, handleStreamEnd } from './sync';
 import { showNotification, showWriteFailedNotification } from './notification';
 import type { ServerMessage, ChangesResponse } from '../shared/types';
 
@@ -30,6 +30,9 @@ export function connect(): void {
 
     // per-client ROOT 캐시 초기화 요청 (echo 방지 baseline)
     state.ws!.send(JSON.stringify({ type: 'init' }));
+
+    // 활성 스트림 복원 (중복 요청 차단용)
+    restoreActiveStreams();
 
     if (state.isFirstConnect) {
       // 첫 연결: 현재 버전 + epoch 가져옴
@@ -105,6 +108,7 @@ function scheduleReconnect(): void {
 /** visibilitychange: 탭 복귀 시 catch-up */
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.lastVersion > 0) {
+    restoreActiveStreams();
     catchUpFromServer();
   }
 });
