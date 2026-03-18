@@ -28,6 +28,58 @@ function mockReq(headers: { [key: string]: string } = {}) {
   return req;
 }
 
+// ─── isPrivateHost ──────────────────────────────────────────────────
+
+describe('isPrivateHost', () => {
+  let isPrivateHost: typeof import('./llm-proxy').isPrivateHost;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import('./llm-proxy');
+    isPrivateHost = mod.isPrivateHost;
+  });
+
+  // ─── 차단 대상 ─────────────────────────────────
+  it.each([
+    ['localhost', 'localhost'],
+    ['sub.localhost', '.localhost suffix'],
+    ['127.0.0.1', 'IPv4 loopback'],
+    ['127.255.255.255', 'IPv4 loopback upper'],
+    ['10.0.0.1', '10.0.0.0/8'],
+    ['10.255.0.1', '10.0.0.0/8 upper'],
+    ['172.16.0.1', '172.16.0.0/12 lower'],
+    ['172.31.255.255', '172.16.0.0/12 upper'],
+    ['192.168.0.1', '192.168.0.0/16'],
+    ['192.168.255.255', '192.168.0.0/16 upper'],
+    ['169.254.1.1', '169.254.0.0/16 link-local'],
+    ['0.0.0.0', '0.0.0.0/8'],
+    ['::1', 'IPv6 loopback'],
+    ['::', 'IPv6 unspecified'],
+    ['fc00::1', 'IPv6 unique local fc'],
+    ['fd12:3456::1', 'IPv6 unique local fd'],
+    ['fe80::1', 'IPv6 link-local'],
+    ['::ffff:127.0.0.1', 'IPv4-mapped IPv6 loopback'],
+    ['::ffff:10.0.0.1', 'IPv4-mapped IPv6 private'],
+    ['::ffff:192.168.1.1', 'IPv4-mapped IPv6 private 192'],
+  ])('blocks %s (%s)', (hostname) => {
+    expect(isPrivateHost(hostname)).toBe(true);
+  });
+
+  // ─── 허용 대상 ─────────────────────────────────
+  it.each([
+    ['api.openai.com', 'public domain'],
+    ['api.anthropic.com', 'public domain'],
+    ['8.8.8.8', 'public IP'],
+    ['172.15.0.1', 'below 172.16 range'],
+    ['172.32.0.1', 'above 172.31 range'],
+    ['169.253.0.1', 'not link-local'],
+    ['192.167.1.1', 'not 192.168'],
+    ['1.2.3.4', 'public IP'],
+  ])('allows %s (%s)', (hostname) => {
+    expect(isPrivateHost(hostname)).toBe(false);
+  });
+});
+
 // ─── decodeProxy2Headers ─────────────────────────────────────────────
 
 describe('decodeProxy2Headers', () => {

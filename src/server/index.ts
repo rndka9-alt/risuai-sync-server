@@ -9,7 +9,7 @@ import * as sync from './sync';
 import { buildClientJs, clientBundleHash } from './client-bundle';
 import type { ClientMessage, HealthResponse, ServerMessage } from '../shared/types';
 import * as logger from './logger';
-import { decodeProxy2Headers, forwardToLlm } from './llm-proxy';
+import { decodeProxy2Headers, forwardToLlm, isPrivateHost } from './llm-proxy';
 import * as streamBuffer from './stream-buffer';
 
 /** WebSocket 연결 관리 */
@@ -424,6 +424,13 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
     };
 
     if (decoded) {
+      // SSRF 방어: private/internal 네트워크 차단
+      if (isPrivateHost(decoded.targetUrl.hostname)) {
+        logger.warn('Blocked SSRF attempt to private host', { hostname: decoded.targetUrl.hostname });
+        res.writeHead(403, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'private_host_blocked' }));
+        return;
+      }
       // LLM API 직접 호출
       if (!decoded.headers['x-forwarded-for']) {
         const remoteAddr = req.socket.remoteAddress;

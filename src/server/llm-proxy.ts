@@ -45,6 +45,47 @@ export function decodeProxy2Headers(req: http.IncomingMessage): DecodedProxy2 | 
   return { targetUrl, headers };
 }
 
+function isPrivateIPv4(hostname: string): boolean {
+  const parts = hostname.split('.');
+  if (parts.length !== 4) return false;
+  const octets: number[] = [];
+  for (const p of parts) {
+    const n = Number(p);
+    if (!Number.isInteger(n) || n < 0 || n > 255) return false;
+    octets.push(n);
+  }
+  const [a, b] = octets;
+  if (a === 0) return true;                          // 0.0.0.0/8
+  if (a === 10) return true;                         // 10.0.0.0/8
+  if (a === 127) return true;                        // 127.0.0.0/8
+  if (a === 169 && b === 254) return true;           // 169.254.0.0/16
+  if (a === 172 && b >= 16 && b <= 31) return true;  // 172.16.0.0/12
+  if (a === 192 && b === 168) return true;           // 192.168.0.0/16
+  return false;
+}
+
+/**
+ * private/internal 네트워크 주소 여부를 판정.
+ * SSRF 방어: 클라이언트가 지정한 URL이 내부 네트워크로 향하는 것을 차단.
+ */
+export function isPrivateHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  if (lower === 'localhost' || lower.endsWith('.localhost')) return true;
+
+  // IPv6 loopback / unspecified
+  if (lower === '::1' || lower === '::') return true;
+  // fc00::/7 (unique local)
+  if (lower.startsWith('fc') || lower.startsWith('fd')) return true;
+  // fe80::/10 (link-local)
+  if (lower.startsWith('fe80:')) return true;
+
+  // IPv4-mapped IPv6 (::ffff:x.x.x.x)
+  const v4Mapped = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (v4Mapped) return isPrivateIPv4(v4Mapped[1]);
+
+  return isPrivateIPv4(hostname);
+}
+
 /**
  * 디코딩된 LLM API URL로 직접 요청 전송.
  * SSE 스트리밍 응답은 onResponse 콜백에서 처리.
