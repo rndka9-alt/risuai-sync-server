@@ -1,5 +1,5 @@
 import { BLOCK_TYPE, isSyncedRootKey } from '../shared/blockTypes';
-import type { BlockChange, BlocksChangedMessage, ChangesResponse, ChangeLogEntry, StreamStartMessage, StreamDataMessage, StreamEndMessage } from '../shared/types';
+import type { BlockChange, BlocksChangedMessage, ChangesResponse, ChangeLogEntry, PendingStream, StreamStartMessage, StreamDataMessage, StreamEndMessage } from '../shared/types';
 import { CLIENT_ID } from './config';
 import { state } from './state';
 import type { StreamState } from './state';
@@ -96,6 +96,11 @@ export function catchUpFromServer(): void {
         deleted: allDeleted,
         timestamp: Date.now(),
       });
+
+      // 보관소: 미수신 완료 스트림 처리
+      if (data.pendingStreams && data.pendingStreams.length > 0) {
+        processPendingStreams(data.pendingStreams);
+      }
     })
     .catch(() => {});
 }
@@ -355,24 +360,87 @@ export function handleStreamData(msg: StreamDataMessage): void {
 
 export function handleStreamEnd(msg: StreamEndMessage): void {
   const streamState = state.activeStreams.get(msg.streamId);
-  if (!streamState) return;
 
+  if (msg.text && msg.targetCharId) {
+    applyFinalText(msg.targetCharId, msg.text, streamState);
+  } else if (streamState?.resolved) {
+    finalizeStream(streamState);
+  }
+
+  if (streamState) {
+    state.activeStreams.delete(msg.streamId);
+  }
+
+  sendAck(msg.streamId);
+}
+
+/** isStreaming 해제 + reloadKeys 증가 */
+function finalizeStream(streamState: StreamState): void {
+  if (!streamState.resolved || typeof __pluginApis__ === 'undefined') return;
   try {
-    if (streamState.resolved && typeof __pluginApis__ !== 'undefined') {
-      const db = __pluginApis__.getDatabase();
-      const char = db.characters?.[streamState.targetCharIndex];
-      if (char) {
-        const chats = (char as Record<string, unknown>).chats as Array<{ isStreaming?: boolean }> | undefined;
-        const chat = chats?.[streamState.targetChatIndex];
-        if (chat) {
-          chat.isStreaming = false;
-        }
-        (char as Record<string, unknown>).reloadKeys = ((char as Record<string, unknown>).reloadKeys as number || 0) + 1;
-      }
+    const db = __pluginApis__.getDatabase();
+    const char = db.characters?.[streamState.targetCharIndex];
+    if (!char) return;
+    const chats = (char as Record<string, unknown>).chats as Array<{ isStreaming?: boolean }> | undefined;
+    const chat = chats?.[streamState.targetChatIndex];
+    if (chat) {
+      chat.isStreaming = false;
+    }
+    (char as Record<string, unknown>).reloadKeys = ((char as Record<string, unknown>).reloadKeys as number || 0) + 1;
+  } catch {
+    // Non-fatal
+  }
+}
+
+/** 최종 텍스트 적용 + isStreaming 해제 */
+function applyFinalText(
+  targetCharId: string,
+  text: string,
+  existingState: StreamState | undefined,
+): void {
+  if (typeof __pluginApis__ === 'undefined') return;
+  try {
+    const db = __pluginApis__.getDatabase();
+
+    if (existingState?.resolved) {
+      existingState.lastText = text;
+      applyStreamText(existingState, db);
+      finalizeStream(existingState);
+      return;
+    }
+
+    // resolved 안 된 경우 → 임시 StreamState로 resolve 시도
+    const tempState: StreamState = {
+      streamId: '',
+      targetCharId,
+      targetCharIndex: -1,
+      targetChatIndex: -1,
+      targetMsgIndex: -1,
+      resolved: false,
+      lastText: text,
+    };
+    if (resolveStreamTarget(tempState, db)) {
+      applyStreamText(tempState, db);
+      finalizeStream(tempState);
     }
   } catch {
     // Non-fatal
   }
+}
 
-  state.activeStreams.delete(msg.streamId);
+/** 보관소: 미수신 완료 스트림 일괄 처리 */
+function processPendingStreams(pendingStreams: ReadonlyArray<PendingStream>): void {
+  for (const pending of pendingStreams) {
+    if (pending.text && pending.targetCharId) {
+      applyFinalText(pending.targetCharId, pending.text, undefined);
+    }
+    sendAck(pending.id);
+  }
+}
+
+/** 보관소: 수신 확인 → 서버가 버퍼 삭제 */
+function sendAck(streamId: string): void {
+  if (state.ws && state.ws.readyState === 1) {
+    state.ws.send(JSON.stringify({ type: 'stream-ack', streamId }));
+  }
 }

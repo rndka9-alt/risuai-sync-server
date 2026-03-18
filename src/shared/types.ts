@@ -61,6 +61,8 @@ export interface StreamDataMessage {
 export interface StreamEndMessage {
   type: 'stream-end';
   streamId: string;
+  targetCharId: string | null;
+  text: string;
   timestamp: number;
 }
 
@@ -74,7 +76,8 @@ export interface WriteFailedMessage {
 /** WebSocket 메시지: 클라이언트 → 서버 */
 export type ClientMessage =
   | InitMessage
-  | WriteNotifyMessage;
+  | WriteNotifyMessage
+  | StreamAckMessage;
 
 export interface InitMessage {
   type: 'init';
@@ -83,6 +86,11 @@ export interface InitMessage {
 export interface WriteNotifyMessage {
   type: 'write-notify';
   file: string;
+}
+
+export interface StreamAckMessage {
+  type: 'stream-ack';
+  streamId: string;
 }
 
 /** HTTP API 응답 */
@@ -94,8 +102,16 @@ export interface ChangeLogEntry {
   senderClientId?: string | null;
 }
 
+/** 보관소(Parcel Locker): 미수신 완료 스트림 */
+export interface PendingStream {
+  id: string;
+  targetCharId: string | null;
+  text: string;
+}
+
 export interface ChangesResponse extends Versioned {
   changes: ChangeLogEntry[];
+  pendingStreams?: PendingStream[];
 }
 
 export interface ManifestResponse extends Versioned {

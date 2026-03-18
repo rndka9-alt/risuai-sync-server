@@ -287,6 +287,30 @@ export function getActiveStreams(): StreamInfo[] {
   return result;
 }
 
+/** 보관소: ACK 수신 시 버퍼 삭제 */
+export function acknowledge(id: string): boolean {
+  return streams.delete(id);
+}
+
+/** 보관소: 미수신 완료 SSE 스트림 목록 (catchUp 응답에 첨부) */
+export function getCompletedPending(): Array<{
+  id: string;
+  targetCharId: string | null;
+  accumulatedText: string;
+}> {
+  const result: Array<{ id: string; targetCharId: string | null; accumulatedText: string }> = [];
+  for (const stream of streams.values()) {
+    if (stream.status === 'completed' && stream.accumulatedText) {
+      result.push({
+        id: stream.id,
+        targetCharId: stream.targetCharId,
+        accumulatedText: stream.accumulatedText,
+      });
+    }
+  }
+  return result;
+}
+
 /** For testing */
 export function _clear(): void {
   streams.clear();

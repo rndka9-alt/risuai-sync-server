@@ -579,6 +579,26 @@ describe('streaming', () => {
     }
   });
 
+  it('endStream broadcasts text and targetCharId', () => {
+    sync.createStream('s1', 'client-a', 'char1');
+    clearSent(clientB);
+
+    const chunk = Buffer.from(
+      'data: {"choices":[{"delta":{"content":"Final text"}}]}\n',
+    );
+    sync.processStreamChunk('s1', chunk);
+    clearSent(clientB);
+
+    sync.endStream('s1');
+
+    const bMsgs = sentMessages(clientB);
+    const endMsg = bMsgs.find((m) => (m as { type: string }).type === 'stream-end') as
+      { type: string; streamId: string; targetCharId: string | null; text: string } | undefined;
+    expect(endMsg).toBeDefined();
+    expect(endMsg!.targetCharId).toBe('char1');
+    expect(endMsg!.text).toBe('Final text');
+  });
+
   it('endStream is no-op for unknown stream ID', () => {
     expect(() => sync.endStream('nonexistent')).not.toThrow();
   });

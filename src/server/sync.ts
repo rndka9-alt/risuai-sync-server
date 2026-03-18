@@ -553,6 +553,8 @@ export function endStream(streamId: string): void {
   const endMsg: StreamEndMessage = {
     type: 'stream-end',
     streamId,
+    targetCharId: stream.targetCharId,
+    text: stream.accumulatedText,
     timestamp: Date.now(),
   };
   broadcast(endMsg, stream.senderClientId);

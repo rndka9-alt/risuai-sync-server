@@ -387,6 +387,72 @@ describe('getActiveStreams', () => {
   });
 });
 
+// ─── Parcel Locker (acknowledge & getCompletedPending) ────────────
+
+describe('stream-buffer parcel locker', () => {
+  let sb: typeof import('./stream-buffer');
+
+  beforeEach(async () => {
+    vi.resetModules();
+    sb = await import('./stream-buffer');
+    sb._clear();
+  });
+
+  it('acknowledge removes a stream and returns true', () => {
+    const req = mockUpstreamReq();
+    sb.create('s1', 'client-a', 'char-1', req);
+    sb.addChunk('s1', openAIChunk('Hello'));
+    sb.complete('s1');
+
+    expect(sb.acknowledge('s1')).toBe(true);
+    // Gone — subscribe should fail
+    const emitter = new EventEmitter();
+    const res = Object.assign(emitter, {
+      writeHead: vi.fn(), write: vi.fn(), end: vi.fn(), writableEnded: false,
+    });
+    expect(sb.subscribe('s1', res as unknown as http.ServerResponse)).toBe(false);
+  });
+
+  it('acknowledge returns false for unknown ID', () => {
+    expect(sb.acknowledge('nonexistent')).toBe(false);
+  });
+
+  it('getCompletedPending returns only completed SSE streams with text', () => {
+    // completed with text → included
+    sb.create('s1', 'client-a', 'char-1', mockUpstreamReq());
+    sb.addChunk('s1', openAIChunk('result'));
+    sb.complete('s1');
+
+    // still streaming → excluded
+    sb.create('s2', 'client-b', 'char-2', mockUpstreamReq());
+    sb.addChunk('s2', openAIChunk('partial'));
+
+    // failed → excluded
+    sb.create('s3', 'client-c', 'char-3', mockUpstreamReq());
+    sb.addChunk('s3', openAIChunk('err'));
+    sb.fail('s3', 'upstream died');
+
+    // non-SSE (no accumulatedText) → excluded
+    sb.storeResponse('r1', 'client-d', 'char-4', 200, {}, Buffer.from('ok'));
+
+    const pending = sb.getCompletedPending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].id).toBe('s1');
+    expect(pending[0].targetCharId).toBe('char-1');
+    expect(pending[0].accumulatedText).toBe('result');
+  });
+
+  it('acknowledged stream is excluded from getCompletedPending', () => {
+    sb.create('s1', 'client-a', 'char-1', mockUpstreamReq());
+    sb.addChunk('s1', openAIChunk('text'));
+    sb.complete('s1');
+
+    sb.acknowledge('s1');
+
+    expect(sb.getCompletedPending()).toHaveLength(0);
+  });
+});
+
 // ─── SSE delta parsing ─────────────────────────────────────────────
 
 describe('SSE delta parsing edge cases', () => {

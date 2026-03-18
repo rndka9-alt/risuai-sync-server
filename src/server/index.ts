@@ -37,6 +37,10 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
         sync.initClientRootCache(clientId);
         return;
       }
+      if (msg.type === 'stream-ack') {
+        streamBuffer.acknowledge(msg.streamId);
+        return;
+      }
       if (msg.type === 'write-notify') {
         // DB write는 서버 프록시에서 감지하므로 여기서는 무시
         if (msg.file === config.DB_PATH) return;
@@ -533,6 +537,19 @@ const server = http.createServer((req, res) => {
       const since = parseInt(url.searchParams.get('since') || '0', 10);
       const clientId = url.searchParams.get('clientId');
       const result = cache.getChangesSince(since, clientId);
+
+      // 보관소: 미수신 완료 스트림 첨부
+      if (result.status === 200 && 'changes' in result.data) {
+        const pending = streamBuffer.getCompletedPending();
+        if (pending.length > 0) {
+          result.data.pendingStreams = pending.map((p) => ({
+            id: p.id,
+            targetCharId: p.targetCharId,
+            text: p.accumulatedText,
+          }));
+        }
+      }
+
       sendJson(res, result.status, result.data);
       return;
     }
