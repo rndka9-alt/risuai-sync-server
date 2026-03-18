@@ -11,6 +11,8 @@ import type { ClientMessage, HealthResponse, ServerMessage } from '../shared/typ
 import * as logger from './logger';
 import { decodeProxy2Headers, forwardToLlm, isPrivateHost } from './llm-proxy';
 import * as streamBuffer from './stream-buffer';
+import { parseRisuSaveBlocks } from './parser';
+import { BLOCK_TYPE } from '../shared/blockTypes';
 
 /** WebSocket 연결 관리 */
 const clients = new Map<string, WebSocket>();
@@ -84,6 +86,38 @@ const heartbeatInterval = setInterval(() => {
 }, 30000);
 
 wss.on('close', () => clearInterval(heartbeatInterval));
+
+/** usePlainFetch 캐시 — read tee 또는 write 경로에서 채워짐 */
+let cachedUsePlainFetch: boolean | null = null;
+
+function extractUsePlainFetchFromBuffer(buffer: Buffer): void {
+  const parsed = parseRisuSaveBlocks(buffer);
+  if (!parsed) return;
+  const rootBlock = parsed.blocks.get('root');
+  if (!rootBlock) return;
+  try {
+    const root: Record<string, unknown> = JSON.parse(rootBlock.json);
+    if (typeof root.usePlainFetch === 'boolean') {
+      cachedUsePlainFetch = root.usePlainFetch;
+    }
+  } catch { /* ignore */ }
+}
+
+function getUsePlainFetch(): boolean | null {
+  if (cachedUsePlainFetch !== null) return cachedUsePlainFetch;
+  // Fallback: write 경로에서 채워진 dataCache
+  const rootData = cache.dataCache.get('root');
+  if (rootData) {
+    try {
+      const parsed: Record<string, unknown> = JSON.parse(rootData);
+      if (typeof parsed.usePlainFetch === 'boolean') {
+        cachedUsePlainFetch = parsed.usePlainFetch;
+        return cachedUsePlainFetch;
+      }
+    } catch { /* ignore */ }
+  }
+  return null;
+}
 
 /** HTTP 유틸 */
 function sendJson(res: http.ServerResponse, statusCode: number, data: object): void {
@@ -637,22 +671,10 @@ const server = http.createServer((req, res) => {
             } catch { /* start fresh */ }
           }
 
-          // Extract usePlainFetch from cached ROOT block if available
-          let usePlainFetch: boolean | null = null;
-          const rootData = cache.dataCache.get('root');
-          if (rootData) {
-            try {
-              const parsed: Record<string, unknown> = JSON.parse(rootData);
-              if (typeof parsed.usePlainFetch === 'boolean') {
-                usePlainFetch = parsed.usePlainFetch;
-              }
-            } catch { /* ignore */ }
-          }
-
           upstream['sync'] = {
             clients: clients.size,
             cacheInitialized: cache.cacheInitialized,
-            usePlainFetch,
+            usePlainFetch: getUsePlainFetch(),
           };
 
           const body = JSON.stringify(upstream);
@@ -667,22 +689,11 @@ const server = http.createServer((req, res) => {
     );
 
     configReq.on('error', () => {
-      let usePlainFetch: boolean | null = null;
-      const rootData = cache.dataCache.get('root');
-      if (rootData) {
-        try {
-          const parsed: Record<string, unknown> = JSON.parse(rootData);
-          if (typeof parsed.usePlainFetch === 'boolean') {
-            usePlainFetch = parsed.usePlainFetch;
-          }
-        } catch { /* ignore */ }
-      }
-
       const body = JSON.stringify({
         sync: {
           clients: clients.size,
           cacheInitialized: cache.cacheInitialized,
-          usePlainFetch,
+          usePlainFetch: getUsePlainFetch(),
         },
       });
       res.writeHead(200, {
@@ -783,6 +794,40 @@ const server = http.createServer((req, res) => {
           } catch {
             res.writeHead(proxyRes.statusCode!, proxyRes.headers);
             res.end(body);
+          }
+        });
+      },
+    );
+    proxyReq.on('error', () => {
+      if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' });
+      res.end('Bad Gateway');
+    });
+    proxyReq.end();
+    return;
+  }
+
+  // --- database.bin read → streaming tee (usePlainFetch 추출) ---
+  if (sync.isDbRead(req) && cachedUsePlainFetch === null) {
+    const proxyReq = http.request(
+      {
+        hostname: config.UPSTREAM.hostname,
+        port: config.UPSTREAM.port,
+        path: req.url,
+        method: req.method,
+        headers: { ...req.headers, host: config.UPSTREAM.host },
+      },
+      (proxyRes) => {
+        res.writeHead(proxyRes.statusCode!, proxyRes.headers);
+
+        const chunks: Buffer[] = [];
+        proxyRes.on('data', (chunk: Buffer) => {
+          res.write(chunk);
+          chunks.push(chunk);
+        });
+        proxyRes.on('end', () => {
+          res.end();
+          if (proxyRes.statusCode! >= 200 && proxyRes.statusCode! < 300) {
+            extractUsePlainFetchFromBuffer(Buffer.concat(chunks));
           }
         });
       },

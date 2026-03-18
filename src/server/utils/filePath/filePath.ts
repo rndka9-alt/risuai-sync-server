@@ -20,6 +20,18 @@ export function isDbWrite(req: IncomingMessage): boolean {
   }
 }
 
+/** DB read 감지 */
+export function isDbRead(req: IncomingMessage): boolean {
+  if (req.method !== 'GET' || req.url !== '/api/read') return false;
+  const fp = req.headers[FILE_PATH_HEADER];
+  if (!fp || typeof fp !== 'string') return false;
+  try {
+    return hexDecode(fp) === config.DB_PATH;
+  } catch {
+    return false;
+  }
+}
+
 /** Remote block write 감지 (Node 서버 모드: remotes/{charId}.local.bin) */
 const REMOTE_FILE_RE = /^remotes\/(.+)\.local\.bin$/;
 

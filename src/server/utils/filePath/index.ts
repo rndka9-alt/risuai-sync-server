@@ -1,1 +1,1 @@
-export { hexDecodeFilePath, isDbWrite, isRemoteBlockWrite, extractCharIdFromFilePath } from './filePath';
+export { hexDecodeFilePath, isDbWrite, isDbRead, isRemoteBlockWrite, extractCharIdFromFilePath } from './filePath';

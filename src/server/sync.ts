@@ -22,7 +22,7 @@ streamCleanupTimer.unref();
 // ─── Re-exports ───────────────────────────────────────────────────
 
 export { init, removeClientCache, initClientRootCache } from './utils/clientCache';
-export { hexDecodeFilePath, isDbWrite, isRemoteBlockWrite, extractCharIdFromFilePath } from './utils/filePath';
+export { hexDecodeFilePath, isDbWrite, isDbRead, isRemoteBlockWrite, extractCharIdFromFilePath } from './utils/filePath';
 export { processDbWrite } from './utils/processDbWrite';
 export { processRemoteBlockWrite } from './utils/processRemoteBlockWrite';
 export { broadcast, broadcastDbChanged, broadcastResponseCompleted } from './utils/broadcast';

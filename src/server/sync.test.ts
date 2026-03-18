@@ -76,6 +76,48 @@ describe('isDbWrite', () => {
   });
 });
 
+describe('isDbRead', () => {
+  let sync: typeof import('./sync');
+
+  beforeEach(async () => {
+    vi.resetModules();
+    sync = await import('./sync');
+  });
+
+  it('detects database.bin read via hex-encoded file-path', () => {
+    const req = mockReq('GET', '/api/read', {
+      'file-path': hexEncode('database/database.bin'),
+    });
+    expect(sync.isDbRead(req)).toBe(true);
+  });
+
+  it('rejects non-GET methods', () => {
+    const req = mockReq('POST', '/api/read', {
+      'file-path': hexEncode('database/database.bin'),
+    });
+    expect(sync.isDbRead(req)).toBe(false);
+  });
+
+  it('rejects wrong URL', () => {
+    const req = mockReq('GET', '/api/write', {
+      'file-path': hexEncode('database/database.bin'),
+    });
+    expect(sync.isDbRead(req)).toBe(false);
+  });
+
+  it('rejects different file paths', () => {
+    const req = mockReq('GET', '/api/read', {
+      'file-path': hexEncode('other/file.bin'),
+    });
+    expect(sync.isDbRead(req)).toBe(false);
+  });
+
+  it('rejects missing file-path header', () => {
+    const req = mockReq('GET', '/api/read');
+    expect(sync.isDbRead(req)).toBe(false);
+  });
+});
+
 describe('isRemoteBlockWrite', () => {
   let sync: typeof import('./sync');
 
