@@ -1,4 +1,4 @@
-import type { ServerMessage, StreamEndMessage } from '../../../shared/types';
+import type { ServerMessage, StreamEndMessage, PlainFetchWarningMessage } from '../../../shared/types';
 import { clients } from '../../serverState';
 import * as config from '../../config';
 
@@ -16,6 +16,15 @@ export function broadcastDbChanged(excludeClientId: string | null): void {
     { type: 'db-changed', file: config.DB_PATH, timestamp: Date.now() },
     excludeClientId,
   );
+}
+
+/** usePlainFetch 감지 시 전체 클라이언트에게 경고 */
+export function broadcastPlainFetchWarning(): void {
+  const msg: PlainFetchWarningMessage = {
+    type: 'plain-fetch-warning',
+    timestamp: Date.now(),
+  };
+  broadcast(msg, null);
 }
 
 /** Non-SSE 응답 완료 시 stream-end 브로드캐스트 (activeStreams 미경유) */

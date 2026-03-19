@@ -5,7 +5,7 @@ import type { BlockChange, ServerMessage } from '../../../shared/types';
 import * as cache from '../../cache';
 import * as logger from '../../logger';
 import { clients, clientRootCache } from '../../serverState';
-import { broadcast, broadcastDbChanged } from '../broadcast';
+import { broadcast, broadcastDbChanged, broadcastPlainFetchWarning } from '../broadcast';
 import { isClientFresh } from '../freshness';
 import { diffRootKeys } from './utils/diffRootKeys';
 import { diffDirectory } from './utils/diffDirectory';
@@ -29,6 +29,7 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
     }
     cache.setCacheInitialized(true);
     logger.info(`Cache initialized with ${blocks.size} blocks`);
+    checkAndBroadcastPlainFetch(blocks);
     return;
   }
 
@@ -160,4 +161,17 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
       senderWs.send(JSON.stringify({ type: 'version-update', epoch: cache.epoch, version } satisfies ServerMessage));
     }
   }
+
+  checkAndBroadcastPlainFetch(blocks);
+}
+
+function checkAndBroadcastPlainFetch(blocks: Map<string, { type: number; json: string; hash: string }>): void {
+  const rootBlock = blocks.get('root');
+  if (!rootBlock) return;
+  try {
+    const root: Record<string, unknown> = JSON.parse(rootBlock.json);
+    if (root.usePlainFetch === true) {
+      broadcastPlainFetchWarning();
+    }
+  } catch { /* ignore */ }
 }

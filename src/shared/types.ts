@@ -23,7 +23,8 @@ export type ServerMessage =
   | StreamStartMessage
   | StreamDataMessage
   | StreamEndMessage
-  | WriteFailedMessage;
+  | WriteFailedMessage
+  | PlainFetchWarningMessage;
 
 export interface BlocksChangedMessage extends Versioned {
   type: 'blocks-changed';
@@ -70,6 +71,11 @@ export interface WriteFailedMessage {
   type: 'write-failed';
   path: string;
   attempts: number;
+  timestamp: number;
+}
+
+export interface PlainFetchWarningMessage {
+  type: 'plain-fetch-warning';
   timestamp: number;
 }
 

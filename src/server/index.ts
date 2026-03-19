@@ -13,9 +13,22 @@ import { decodeProxy2Headers, forwardToLlm, isPrivateHost } from './llm-proxy';
 import * as streamBuffer from './stream-buffer';
 import { BLOCK_TYPE } from '../shared/blockTypes';
 import { clients, aliveState, freshClients } from './serverState';
-import { extractUsePlainFetchFromBuffer, getUsePlainFetch, needsExtraction } from './usePlainFetchCache';
+import { parseRisuSaveBlocks } from './parser';
 import { sendJson, notifyWriteFailed, sendUpstreamWithRetry, proxyRequest } from './handlers/helpers';
+import { broadcastPlainFetchWarning } from './utils/broadcast';
 import { handleClientLog } from './handlers/clientLog';
+
+function getUsePlainFetchFromDataCache(): boolean | null {
+  const rootData = cache.dataCache.get('root');
+  if (!rootData) return null;
+  try {
+    const parsed: Record<string, unknown> = JSON.parse(rootData);
+    if (typeof parsed.usePlainFetch === 'boolean') {
+      return parsed.usePlainFetch;
+    }
+  } catch { /* ignore */ }
+  return null;
+}
 
 const wss = new WebSocketServer({ noServer: true });
 
@@ -563,7 +576,7 @@ const server = http.createServer((req, res) => {
           upstream['sync'] = {
             clients: clients.size,
             cacheInitialized: cache.cacheInitialized,
-            usePlainFetch: getUsePlainFetch(),
+            usePlainFetch: getUsePlainFetchFromDataCache(),
           };
 
           const body = JSON.stringify(upstream);
@@ -695,8 +708,8 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // --- database.bin read → streaming tee (usePlainFetch 추출) ---
-  if (sync.isDbRead(req) && needsExtraction()) {
+  // --- database.bin read → usePlainFetch 감지 ---
+  if (sync.isDbRead(req)) {
     const proxyReq = http.request(
       {
         hostname: config.UPSTREAM.hostname,
@@ -716,7 +729,16 @@ const server = http.createServer((req, res) => {
         proxyRes.on('end', () => {
           res.end();
           if (proxyRes.statusCode! >= 200 && proxyRes.statusCode! < 300) {
-            extractUsePlainFetchFromBuffer(Buffer.concat(chunks));
+            const parsed = parseRisuSaveBlocks(Buffer.concat(chunks));
+            if (!parsed) return;
+            const rootBlock = parsed.blocks.get('root');
+            if (!rootBlock) return;
+            try {
+              const root: Record<string, unknown> = JSON.parse(rootBlock.json);
+              if (root.usePlainFetch === true) {
+                broadcastPlainFetchWarning();
+              }
+            } catch { /* ignore */ }
           }
         });
       },

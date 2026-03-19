@@ -1,7 +1,7 @@
 import { SYNC_TOKEN, CLIENT_ID, syncFetch } from './config';
 import { state, MAX_RECONNECT_DELAY } from './state';
 import { catchUpFromServer, sendCaughtUp, restoreActiveStreams, handleBlocksChanged, handleStreamStart, handleStreamData, handleStreamEnd, processPendingStreams } from './sync';
-import { showNotification, showWriteFailedNotification } from './notification';
+import { showNotification, showWriteFailedNotification, showPlainFetchWarning } from './notification';
 import type { ServerMessage, ChangesResponse } from '../shared/types';
 
 /** WebSocket 연결 */
@@ -86,6 +86,8 @@ export function connect(): void {
         handleStreamEnd(msg);
       } else if (msg.type === 'write-failed') {
         showWriteFailedNotification();
+      } else if (msg.type === 'plain-fetch-warning') {
+        showPlainFetchWarning();
       }
     } catch {
       // 파싱 실패 무시
