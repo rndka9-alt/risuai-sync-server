@@ -15,6 +15,7 @@ import { BLOCK_TYPE } from '../shared/blockTypes';
 import { clients, aliveState, freshClients } from './serverState';
 import { extractUsePlainFetchFromBuffer, getUsePlainFetch, needsExtraction } from './usePlainFetchCache';
 import { sendJson, notifyWriteFailed, sendUpstreamWithRetry, proxyRequest } from './handlers/helpers';
+import { handleClientLog } from './handlers/clientLog';
 
 const wss = new WebSocketServer({ noServer: true });
 
@@ -506,6 +507,11 @@ const server = http.createServer((req, res) => {
     // --- Stream reconnection ---
     if (req.method === 'GET' && url.pathname === '/sync/streams/active') {
       sendJson(res, 200, { streams: streamBuffer.getActiveStreams() });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/sync/log') {
+      handleClientLog(req, res);
       return;
     }
 

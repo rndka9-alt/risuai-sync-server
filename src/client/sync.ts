@@ -4,6 +4,7 @@ import { CLIENT_ID, syncFetch } from './config';
 import { state } from './state';
 import type { StreamState } from './state';
 import { showNotification } from './notification';
+import { reloadOnEpochMismatch } from './epochReload';
 
 /**
  * Plugin API가 실제로 DB에 쓸 수 있는 키 (RisuAI allowedDbKeys 미러).
@@ -54,7 +55,7 @@ export function catchUpFromServer(): void {
   syncFetch('/sync/changes?since=' + state.lastVersion + '&clientId=' + encodeURIComponent(CLIENT_ID))
     .then((r) => {
       if (r.status === 410) {
-        showNotification();
+        reloadOnEpochMismatch('catch-up-410', state.epoch, 0);
         return null;
       }
       return r.json() as Promise<ChangesResponse>;
@@ -62,7 +63,7 @@ export function catchUpFromServer(): void {
     .then((data) => {
       if (!data) return;
       if (state.epoch && state.epoch !== data.epoch) {
-        showNotification();
+        reloadOnEpochMismatch('catch-up-epoch', state.epoch, data.epoch);
         return;
       }
       state.epoch = data.epoch;
