@@ -28,7 +28,11 @@ function loadEnvFile(filePath: string): void {
 loadEnvFile(path.join(__dirname, '..', '.env'));
 
 export const PORT = parseInt(process.env.PORT || '3000', 10);
-export const UPSTREAM = new URL(process.env.UPSTREAM || 'http://localhost:6001');
+
+if (!process.env.UPSTREAM) {
+  throw new Error('UPSTREAM env is required (e.g. http://risuai:6001)');
+}
+export const UPSTREAM = new URL(process.env.UPSTREAM);
 export const DB_PATH = process.env.DB_PATH || 'database/database.bin';
 export const MAX_CACHE_SIZE = parseInt(process.env.MAX_CACHE_SIZE || '104857600', 10);
 export const MAX_LOG_ENTRIES = parseInt(process.env.MAX_LOG_ENTRIES || '1000', 10);
