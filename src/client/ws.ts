@@ -1,6 +1,6 @@
 import { SYNC_TOKEN, CLIENT_ID, syncFetch } from './config';
 import { state, MAX_RECONNECT_DELAY } from './state';
-import { catchUpFromServer, sendCaughtUp, restoreActiveStreams, handleBlocksChanged, handleStreamStart, handleStreamData, handleStreamEnd } from './sync';
+import { catchUpFromServer, sendCaughtUp, restoreActiveStreams, handleBlocksChanged, handleStreamStart, handleStreamData, handleStreamEnd, processPendingStreams } from './sync';
 import { showNotification, showWriteFailedNotification } from './notification';
 import type { ServerMessage, ChangesResponse } from '../shared/types';
 
@@ -35,12 +35,17 @@ export function connect(): void {
     restoreActiveStreams();
 
     if (state.isFirstConnect) {
-      // 첫 연결: 현재 버전 + epoch 가져옴
+      // 첫 연결: 현재 버전 + epoch 가져옴 + 미수신 완료 스트림 처리
       syncFetch('/sync/changes?since=0&clientId=' + encodeURIComponent(CLIENT_ID))
         .then((r) => r.json() as Promise<ChangesResponse>)
         .then((data) => {
           state.epoch = data.epoch;
           state.lastVersion = data.version;
+
+          if (data.pendingStreams && data.pendingStreams.length > 0) {
+            processPendingStreams(data.pendingStreams);
+          }
+
           sendCaughtUp();
         })
         .catch(() => {});

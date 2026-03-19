@@ -448,7 +448,7 @@ function applyFinalText(
 }
 
 /** 보관소: 미수신 완료 스트림 일괄 처리 */
-function processPendingStreams(pendingStreams: ReadonlyArray<PendingStream>): void {
+export function processPendingStreams(pendingStreams: ReadonlyArray<PendingStream>): void {
   for (const pending of pendingStreams) {
     if (pending.text && pending.targetCharId) {
       applyFinalText(pending.targetCharId, pending.text, undefined);
