@@ -231,8 +231,10 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
     clientDisconnected = true;
 
     // SSE 스트리밍 중이면 upstream을 유지 (재연결 가능)
+    // sender가 끊겼음을 표시하여 stream-end broadcast에서 sender를 제외하지 않게 한다
     // 비-SSE 요청이면 upstream 중단
     if (activeStreamId) {
+      sync.markSenderDisconnected(activeStreamId);
       logger.info('Client disconnected, stream buffered for reconnect', { streamId: activeStreamId, sender: senderClientId });
     } else if (upstreamReq && !upstreamReq.destroyed) {
       upstreamReq.destroy();

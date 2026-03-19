@@ -15,6 +15,10 @@ export function endStream(streamId: string): void {
     }
   }
 
+  // Sender의 HTTP 연결이 끊긴 경우, broadcast에서 sender를 제외하지 않는다.
+  // (Android 백그라운드 등으로 HTTP SSE가 끊겼지만 WebSocket으로 재연결한 경우)
+  const excludeClientId = stream.senderDisconnected ? null : stream.senderClientId;
+
   // Flush accumulated text if any was throttled
   if (stream.accumulatedText.length > 0) {
     const dataMsg: StreamDataMessage = {
@@ -23,7 +27,7 @@ export function endStream(streamId: string): void {
       text: stream.accumulatedText,
       timestamp: Date.now(),
     };
-    broadcast(dataMsg, stream.senderClientId);
+    broadcast(dataMsg, excludeClientId);
   }
 
   const endMsg: StreamEndMessage = {
@@ -33,6 +37,6 @@ export function endStream(streamId: string): void {
     text: stream.accumulatedText,
     timestamp: Date.now(),
   };
-  broadcast(endMsg, stream.senderClientId);
+  broadcast(endMsg, excludeClientId);
   activeStreams.delete(streamId);
 }

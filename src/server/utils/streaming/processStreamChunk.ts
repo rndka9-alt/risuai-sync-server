@@ -27,12 +27,13 @@ export function processStreamChunk(streamId: string, chunk: Buffer): void {
   const now = Date.now();
   if (now - stream.lastBroadcastTime >= STREAM_BROADCAST_INTERVAL_MS) {
     stream.lastBroadcastTime = now;
+    const excludeClientId = stream.senderDisconnected ? null : stream.senderClientId;
     const msg: StreamDataMessage = {
       type: 'stream-data',
       streamId,
       text: stream.accumulatedText,
       timestamp: now,
     };
-    broadcast(msg, stream.senderClientId);
+    broadcast(msg, excludeClientId);
   }
 }

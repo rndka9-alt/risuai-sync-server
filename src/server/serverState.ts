@@ -47,6 +47,8 @@ export interface ActiveStream {
   lastBroadcastTime: number;
   lineBuffer: string;
   createdAt: number;
+  /** Sender의 HTTP 연결이 끊긴 경우 true — broadcast에서 sender를 제외하지 않는다 */
+  senderDisconnected: boolean;
 }
 
 export const activeStreams = new Map<string, ActiveStream>();

@@ -15,6 +15,7 @@ export function createStream(
     lastBroadcastTime: 0,
     lineBuffer: '',
     createdAt: Date.now(),
+    senderDisconnected: false,
   });
 
   const msg: StreamStartMessage = {

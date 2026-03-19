@@ -688,6 +688,62 @@ describe('streaming', () => {
     sync.endStream('s1');
     expect(sync.isWriteBlockedByStream('client-b')).toBe(false);
   });
+
+  it('endStream excludes sender by default', () => {
+    sync.createStream('s1', 'client-a', 'char1');
+    clearSent(clientA);
+    clearSent(clientB);
+
+    sync.endStream('s1');
+
+    // Sender should NOT receive stream-end
+    expect(sentMessages(clientA)).toHaveLength(0);
+    // Non-sender should receive stream-end
+    const bMsgs = sentMessages(clientB);
+    expect(bMsgs.find((m) => (m as { type: string }).type === 'stream-end')).toBeDefined();
+  });
+
+  it('endStream includes sender after markSenderDisconnected', () => {
+    sync.createStream('s1', 'client-a', 'char1');
+    clearSent(clientA);
+    clearSent(clientB);
+
+    sync.markSenderDisconnected('s1');
+    sync.endStream('s1');
+
+    // Sender SHOULD receive stream-end (HTTP connection was lost)
+    const aMsgs = sentMessages(clientA);
+    const endMsg = aMsgs.find((m) => (m as { type: string }).type === 'stream-end');
+    expect(endMsg).toBeDefined();
+
+    // Non-sender should also receive it
+    const bMsgs = sentMessages(clientB);
+    expect(bMsgs.find((m) => (m as { type: string }).type === 'stream-end')).toBeDefined();
+  });
+
+  it('processStreamChunk includes sender after markSenderDisconnected', () => {
+    sync.createStream('s1', 'client-a', 'char1');
+    clearSent(clientA);
+    clearSent(clientB);
+
+    sync.markSenderDisconnected('s1');
+
+    const chunk = Buffer.from(
+      'data: {"choices":[{"delta":{"content":"Hello"}}]}\n',
+    );
+    sync.processStreamChunk('s1', chunk);
+
+    // Sender should receive stream-data (reconnected via WS after HTTP drop)
+    const aMsgs = sentMessages(clientA);
+    const dataMsg = aMsgs.find((m) => (m as { type: string }).type === 'stream-data');
+    expect(dataMsg).toBeDefined();
+
+    sync.endStream('s1');
+  });
+
+  it('markSenderDisconnected is no-op for unknown stream', () => {
+    expect(() => sync.markSenderDisconnected('nonexistent')).not.toThrow();
+  });
 });
 
 // ─── broadcastResponseCompleted (non-SSE parcel locker) ───────────
