@@ -9,15 +9,17 @@ import * as sync from './sync';
 import { buildClientJs, clientBundleHash } from './client-bundle';
 import type { ClientMessage, HealthResponse } from '../shared/types';
 import * as logger from './logger';
-import { decodeProxy2Headers, forwardToLlm, isPrivateHost } from './llm-proxy';
+import { decodeProxy2Headers, forwardToLlm, isPrivateHost } from './utils/llmProxy';
 import * as streamBuffer from './stream-buffer';
-import { BLOCK_TYPE } from '../shared/blockTypes';
 import { clients, aliveState, freshClients } from './serverState';
 import { parseRisuSaveBlocks } from './parser';
-import { sendJson, notifyWriteFailed, sendUpstreamWithRetry, proxyRequest } from './handlers/helpers';
+import { sendJson } from './utils/sendJson';
+import { notifyWriteFailed } from './utils/notifyWriteFailed';
+import { sendUpstreamWithRetry } from './utils/sendUpstreamWithRetry';
+import { proxyRequest } from './utils/proxyRequest';
 import { broadcastPlainFetchWarning } from './utils/broadcast';
 import { verifyRisuAuth } from './utils/verifyRisuAuth';
-import { handleClientLog } from './handlers/clientLog';
+import { handleClientLog } from './utils/handleClientLog';
 
 function getUsePlainFetchFromDataCache(): boolean | null {
   const rootData = cache.dataCache.get('root');

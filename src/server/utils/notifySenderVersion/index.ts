@@ -1,0 +1,1 @@
+export { notifySenderVersion } from './notifySenderVersion';

@@ -1,0 +1,1 @@
+export { extractHeader } from './extractHeader';

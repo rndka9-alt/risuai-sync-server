@@ -1,0 +1,14 @@
+export { sendCaughtUp } from './sendCaughtUp';
+export { catchUpFromServer } from './catchUpFromServer';
+export { isRootSafeChange } from './isRootSafeChange';
+export { applyRootSafeKeys } from './applyRootSafeKeys';
+export { classifyChangedBlocks } from './classifyChangedBlocks';
+export { handleBlocksChanged } from './handleBlocksChanged';
+export { resolveStreamTarget } from './resolveStreamTarget';
+export { resolveStreamFromDb } from './resolveStreamFromDb';
+export { applyStreamText } from './applyStreamText';
+export { handleStreamStart } from './handleStreamStart';
+export { handleStreamData } from './handleStreamData';
+export { handleStreamEnd } from './handleStreamEnd';
+export { processPendingStreams } from './processPendingStreams';
+export { restoreActiveStreams } from './restoreActiveStreams';

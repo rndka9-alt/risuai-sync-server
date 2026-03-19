@@ -1,2 +1,6 @@
-export { reserveDbWrite, enqueueDbWrite, skipDbWrite } from './dbWriteQueue';
-export { reserveRemoteWrite, enqueueRemoteWrite, skipRemoteWrite } from './remoteWriteQueue';
+export { reserveDbWrite } from './reserveDbWrite';
+export { enqueueDbWrite } from './enqueueDbWrite';
+export { skipDbWrite } from './skipDbWrite';
+export { reserveRemoteWrite } from './reserveRemoteWrite';
+export { enqueueRemoteWrite } from './enqueueRemoteWrite';
+export { skipRemoteWrite } from './skipRemoteWrite';

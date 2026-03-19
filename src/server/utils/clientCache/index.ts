@@ -1,1 +1,2 @@
-export { removeClientCache, initClientRootCache } from './clientCache';
+export { removeClientCache } from './removeClientCache';
+export { initClientRootCache } from './initClientRootCache';

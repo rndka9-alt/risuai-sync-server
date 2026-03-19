@@ -1,6 +1,5 @@
-import type { ServerMessage, StreamEndMessage, PlainFetchWarningMessage } from '../../../shared/types';
+import type { ServerMessage } from '../../../shared/types';
 import { clients } from '../../serverState';
-import * as config from '../../config';
 
 export function broadcast(payload: ServerMessage, excludeClientId: string | null): void {
   const data = JSON.stringify(payload);
@@ -9,38 +8,4 @@ export function broadcast(payload: ServerMessage, excludeClientId: string | null
       client.send(data);
     }
   }
-}
-
-export function broadcastDbChanged(excludeClientId: string | null): void {
-  broadcast(
-    { type: 'db-changed', file: config.DB_PATH, timestamp: Date.now() },
-    excludeClientId,
-  );
-}
-
-/** usePlainFetch 감지 시 전체 클라이언트에게 경고 */
-export function broadcastPlainFetchWarning(): void {
-  const msg: PlainFetchWarningMessage = {
-    type: 'plain-fetch-warning',
-    timestamp: Date.now(),
-  };
-  broadcast(msg, null);
-}
-
-/** Non-SSE 응답 완료 시 stream-end 브로드캐스트 (activeStreams 미경유) */
-export function broadcastResponseCompleted(
-  streamId: string,
-  senderClientId: string,
-  targetCharId: string | null,
-  text: string,
-): void {
-  if (!text) return;
-  const endMsg: StreamEndMessage = {
-    type: 'stream-end',
-    streamId,
-    targetCharId,
-    text,
-    timestamp: Date.now(),
-  };
-  broadcast(endMsg, senderClientId);
 }

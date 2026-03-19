@@ -1,10 +1,10 @@
 import crypto from 'crypto';
 import { BLOCK_TYPE } from '../../../shared/blockTypes';
-import type { BlockChange, ServerMessage } from '../../../shared/types';
+import type { BlockChange } from '../../../shared/types';
 import * as cache from '../../cache';
 import * as logger from '../../logger';
-import { clients } from '../../serverState';
 import { broadcast } from '../broadcast';
+import { notifySenderVersion } from '../notifySenderVersion';
 
 /** Remote block write 처리: 해시 비교 → broadcast (Node 서버 모드) */
 export function processRemoteBlockWrite(
@@ -52,10 +52,5 @@ export function processRemoteBlockWrite(
     senderClientId,
   );
 
-  if (senderClientId && clients.has(senderClientId)) {
-    const senderWs = clients.get(senderClientId)!;
-    if (senderWs.readyState === 1) {
-      senderWs.send(JSON.stringify({ type: 'version-update', epoch: cache.epoch, version } satisfies ServerMessage));
-    }
-  }
+  notifySenderVersion(senderClientId, version);
 }

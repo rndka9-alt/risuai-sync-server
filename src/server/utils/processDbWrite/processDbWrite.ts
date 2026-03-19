@@ -1,12 +1,13 @@
 import crypto from 'crypto';
 import { parseRisuSaveBlocks } from '../../parser';
 import { BLOCK_TYPE } from '../../../shared/blockTypes';
-import type { BlockChange, ServerMessage } from '../../../shared/types';
+import type { BlockChange } from '../../../shared/types';
 import * as cache from '../../cache';
 import * as logger from '../../logger';
-import { clients, clientRootCache } from '../../serverState';
+import { clientRootCache } from '../../serverState';
 import { broadcast, broadcastDbChanged, broadcastPlainFetchWarning } from '../broadcast';
 import { isClientFresh } from '../freshness';
+import { notifySenderVersion } from '../notifySenderVersion';
 import { diffRootKeys } from './utils/diffRootKeys';
 import { diffDirectory } from './utils/diffDirectory';
 
@@ -155,12 +156,7 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
   );
 
   // sender에게는 version만 알림 (catch-up 시 자기 변경분을 다시 받지 않도록)
-  if (senderClientId && clients.has(senderClientId)) {
-    const senderWs = clients.get(senderClientId)!;
-    if (senderWs.readyState === 1) {
-      senderWs.send(JSON.stringify({ type: 'version-update', epoch: cache.epoch, version } satisfies ServerMessage));
-    }
-  }
+  notifySenderVersion(senderClientId, version);
 
   checkAndBroadcastPlainFetch(blocks);
 }
