@@ -4,7 +4,7 @@ import { BLOCK_TYPE } from '../shared/blockTypes';
 vi.mock('./config', () => ({
   PORT: 3000,
   UPSTREAM: new URL('http://localhost:6001'),
-  SYNC_TOKEN: 'test-token',
+
   DB_PATH: 'database/database.bin',
   MAX_CACHE_SIZE: 200,
   MAX_LOG_ENTRIES: 5,

@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import crypto from 'crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -30,7 +29,6 @@ loadEnvFile(path.join(__dirname, '..', '.env'));
 
 export const PORT = parseInt(process.env.PORT || '3000', 10);
 export const UPSTREAM = new URL(process.env.UPSTREAM || 'http://localhost:6001');
-export const SYNC_TOKEN = process.env.SYNC_TOKEN || crypto.randomBytes(16).toString('hex');
 export const DB_PATH = process.env.DB_PATH || 'database/database.bin';
 export const MAX_CACHE_SIZE = parseInt(process.env.MAX_CACHE_SIZE || '104857600', 10);
 export const MAX_LOG_ENTRIES = parseInt(process.env.MAX_LOG_ENTRIES || '1000', 10);

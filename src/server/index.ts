@@ -439,6 +439,92 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
   });
 }
 
+/** 인증된 /sync/* 라우트 핸들러 */
+function handleAuthenticatedSyncRoute(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  url: URL,
+): void {
+  if (req.method === 'GET' && url.pathname === '/sync/block') {
+    const name = url.searchParams.get('name');
+    if (!name) {
+      sendJson(res, 400, { error: 'missing name parameter' });
+      return;
+    }
+    const data = cache.dataCache.get(name);
+    if (data === null) {
+      sendJson(res, 404, { error: 'block not found in cache' });
+      return;
+    }
+    const hashEntry = cache.hashCache.get(name);
+    const resHeaders: Record<string, string | number> = {
+      'content-type': 'application/json; charset=utf-8',
+      'content-length': Buffer.byteLength(data),
+    };
+    if (hashEntry) resHeaders['x-block-hash'] = hashEntry.hash;
+    res.writeHead(200, resHeaders);
+    res.end(data);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/sync/changes') {
+    const since = parseInt(url.searchParams.get('since') || '0', 10);
+    const clientId = url.searchParams.get('clientId');
+    const result = cache.getChangesSince(since, clientId);
+
+    // 보관소: 미수신 완료 스트림 첨부
+    if (result.status === 200 && 'changes' in result.data) {
+      const pending = streamBuffer.getCompletedPending();
+      if (pending.length > 0) {
+        result.data.pendingStreams = pending.map((p) => ({
+          id: p.id,
+          targetCharId: p.targetCharId,
+          text: p.accumulatedText,
+        }));
+      }
+    }
+
+    sendJson(res, result.status, result.data);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/sync/manifest') {
+    sendJson(res, 200, cache.getManifest());
+    return;
+  }
+
+  // --- Stream reconnection ---
+  if (req.method === 'GET' && url.pathname === '/sync/streams/active') {
+    sendJson(res, 200, { streams: streamBuffer.getActiveStreams() });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/sync/log') {
+    handleClientLog(req, res);
+    return;
+  }
+
+  const streamMatch = url.pathname.match(/^\/sync\/stream\/([^/]+)$/);
+  if (req.method === 'GET' && streamMatch) {
+    if (!streamBuffer.subscribe(streamMatch[1], res)) {
+      sendJson(res, 404, { error: 'stream not found' });
+    }
+    return;
+  }
+
+  const abortMatch = url.pathname.match(/^\/sync\/stream\/([^/]+)\/abort$/);
+  if (req.method === 'POST' && abortMatch) {
+    const streamId = abortMatch[1];
+    if (streamBuffer.abort(streamId)) {
+      sync.endStream(streamId);
+      sendJson(res, 200, { success: true });
+    } else {
+      sendJson(res, 404, { error: 'stream not found or already finished' });
+    }
+    return;
+  }
+}
+
 /** HTTP 서버 */
 const server = http.createServer((req, res) => {
   const reqStart = performance.now();
@@ -505,92 +591,22 @@ const server = http.createServer((req, res) => {
     }
 
     // /sync/client.js, /sync/health 이외의 엔드포인트는 인증 필요
-    const authHeader = req.headers.authorization;
-    const bearerToken = typeof authHeader === 'string' ? authHeader.replace(/^Bearer\s+/i, '') : '';
-    const token = url.searchParams.get('token') || bearerToken;
-    if (token !== config.SYNC_TOKEN) {
+    const risuAuth = req.headers[config.RISU_AUTH_HEADER];
+    if (typeof risuAuth !== 'string') {
       sendJson(res, 401, { error: 'unauthorized' });
       return;
     }
 
-    if (req.method === 'GET' && url.pathname === '/sync/block') {
-      const name = url.searchParams.get('name');
-      if (!name) {
-        sendJson(res, 400, { error: 'missing name parameter' });
+    verifyRisuAuth(risuAuth).then((valid) => {
+      if (!valid) {
+        sendJson(res, 401, { error: 'unauthorized' });
         return;
       }
-      const data = cache.dataCache.get(name);
-      if (data === null) {
-        sendJson(res, 404, { error: 'block not found in cache' });
-        return;
-      }
-      const hashEntry = cache.hashCache.get(name);
-      const resHeaders: Record<string, string | number> = {
-        'content-type': 'application/json; charset=utf-8',
-        'content-length': Buffer.byteLength(data),
-      };
-      if (hashEntry) resHeaders['x-block-hash'] = hashEntry.hash;
-      res.writeHead(200, resHeaders);
-      res.end(data);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/sync/changes') {
-      const since = parseInt(url.searchParams.get('since') || '0', 10);
-      const clientId = url.searchParams.get('clientId');
-      const result = cache.getChangesSince(since, clientId);
-
-      // 보관소: 미수신 완료 스트림 첨부
-      if (result.status === 200 && 'changes' in result.data) {
-        const pending = streamBuffer.getCompletedPending();
-        if (pending.length > 0) {
-          result.data.pendingStreams = pending.map((p) => ({
-            id: p.id,
-            targetCharId: p.targetCharId,
-            text: p.accumulatedText,
-          }));
-        }
-      }
-
-      sendJson(res, result.status, result.data);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/sync/manifest') {
-      sendJson(res, 200, cache.getManifest());
-      return;
-    }
-
-    // --- Stream reconnection ---
-    if (req.method === 'GET' && url.pathname === '/sync/streams/active') {
-      sendJson(res, 200, { streams: streamBuffer.getActiveStreams() });
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/sync/log') {
-      handleClientLog(req, res);
-      return;
-    }
-
-    const streamMatch = url.pathname.match(/^\/sync\/stream\/([^/]+)$/);
-    if (req.method === 'GET' && streamMatch) {
-      if (!streamBuffer.subscribe(streamMatch[1], res)) {
-        sendJson(res, 404, { error: 'stream not found' });
-      }
-      return;
-    }
-
-    const abortMatch = url.pathname.match(/^\/sync\/stream\/([^/]+)\/abort$/);
-    if (req.method === 'POST' && abortMatch) {
-      const streamId = abortMatch[1];
-      if (streamBuffer.abort(streamId)) {
-        sync.endStream(streamId);
-        sendJson(res, 200, { success: true });
-      } else {
-        sendJson(res, 404, { error: 'stream not found or already finished' });
-      }
-      return;
-    }
+      handleAuthenticatedSyncRoute(req, res, url);
+    }).catch(() => {
+      if (!res.headersSent) sendJson(res, 502, { error: 'auth verification failed' });
+    });
+    return;
   }
 
   // --- GET /.proxy/config → 체이닝 프록시 설정 ---
@@ -839,7 +855,6 @@ server.listen(config.PORT, () => {
   logger.info(`Server listening on port ${config.PORT}`);
   logger.info(`Upstream: ${config.UPSTREAM.href}`);
   logger.info(`DB path: ${config.DB_PATH}`);
-  logger.info(`Token: ${config.SYNC_TOKEN.slice(0, 4)}****`);
   logger.info(`Max cache size: ${(config.MAX_CACHE_SIZE / 1048576).toFixed(0)}MB`);
   logger.info(`Max log entries: ${config.MAX_LOG_ENTRIES}`);
   logger.info(`Log level: ${config.LOG_LEVEL}`);

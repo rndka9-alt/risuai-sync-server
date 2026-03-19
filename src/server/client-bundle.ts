@@ -16,7 +16,6 @@ export const clientBundleHash = crypto.createHash('sha256').update(clientBundle)
 export function buildClientJs(): string {
   // 런타임 설정을 스크립트 앞에 주입 (IIFE 외부 스코프)
   const runtimeConfig = `var __SYNC_CONFIG__=${JSON.stringify({
-    SYNC_TOKEN: config.SYNC_TOKEN,
     DB_PATH: config.DB_PATH,
   })};\n`;
   return runtimeConfig + clientBundle;
