@@ -17,6 +17,7 @@ export interface BlockChange {
 
 /** WebSocket 메시지: 서버 → 클라이언트 */
 export type ServerMessage =
+  | AuthResultMessage
   | BlocksChangedMessage
   | VersionUpdateMessage
   | DbChangedMessage
@@ -25,6 +26,11 @@ export type ServerMessage =
   | StreamEndMessage
   | WriteFailedMessage
   | PlainFetchWarningMessage;
+
+export interface AuthResultMessage {
+  type: 'auth-result';
+  success: boolean;
+}
 
 export interface BlocksChangedMessage extends Versioned {
   type: 'blocks-changed';
@@ -81,10 +87,16 @@ export interface PlainFetchWarningMessage {
 
 /** WebSocket 메시지: 클라이언트 → 서버 */
 export type ClientMessage =
+  | AuthMessage
   | InitMessage
   | WriteNotifyMessage
   | StreamAckMessage
   | CaughtUpMessage;
+
+export interface AuthMessage {
+  type: 'auth';
+  token: string;
+}
 
 export interface InitMessage {
   type: 'init';

@@ -13,7 +13,7 @@ export const SYNC_TOKEN: string = __SYNC_CONFIG__.SYNC_TOKEN;
 export const DB_PATH: string = __SYNC_CONFIG__.DB_PATH;
 export const CLIENT_ID: string = Math.random().toString(36).substring(2) + Date.now().toString(36);
 
-export { CLIENT_ID_HEADER, FILE_PATH_HEADER, PROXY2_TARGET_HEADER } from '../shared/headers';
+export { CLIENT_ID_HEADER, FILE_PATH_HEADER, PROXY2_TARGET_HEADER, RISU_AUTH_HEADER } from '../shared/headers';
 
 /** 인증이 필요한 /sync/* 엔드포인트용 fetch wrapper */
 export function syncFetch(url: string, init?: RequestInit): Promise<Response> {

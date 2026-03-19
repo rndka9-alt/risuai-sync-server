@@ -16,6 +16,7 @@ import { clients, aliveState, freshClients } from './serverState';
 import { parseRisuSaveBlocks } from './parser';
 import { sendJson, notifyWriteFailed, sendUpstreamWithRetry, proxyRequest } from './handlers/helpers';
 import { broadcastPlainFetchWarning } from './utils/broadcast';
+import { verifyRisuAuth } from './utils/verifyRisuAuth';
 import { handleClientLog } from './handlers/clientLog';
 
 function getUsePlainFetchFromDataCache(): boolean | null {
@@ -32,61 +33,102 @@ function getUsePlainFetchFromDataCache(): boolean | null {
 
 const wss = new WebSocketServer({ noServer: true });
 
+const AUTH_TIMEOUT_MS = 10_000;
+
 wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   const url = new URL(req.url!, `http://${req.headers.host}`);
   const clientId = url.searchParams.get('clientId') || crypto.randomBytes(8).toString('hex');
 
-  clients.set(clientId, ws);
   aliveState.set(ws, true);
-  logger.info('Client connected', { clientId, total: String(clients.size) });
-
   ws.on('pong', () => { aliveState.set(ws, true); });
 
-  ws.on('message', (raw: WebSocket.RawData) => {
-    try {
-      const msg: ClientMessage = JSON.parse(raw.toString());
-      if (msg.type === 'init') {
-        // 클라이언트 첫 연결: 글로벌 ROOT 캐시를 per-client 캐시로 복사 (echo 방지 baseline)
-        sync.initClientRootCache(clientId);
-        return;
-      }
-      if (msg.type === 'caught-up') {
-        freshClients.add(clientId);
-        logger.info('Client caught up (fresh)', { clientId });
-        return;
-      }
-      if (msg.type === 'stream-ack') {
-        streamBuffer.acknowledge(msg.streamId);
-        return;
-      }
-      if (msg.type === 'write-notify') {
-        // DB write는 서버 프록시에서 감지하므로 여기서는 무시
-        if (msg.file === config.DB_PATH) return;
+  // Phase 1: 인증 대기 — AUTH_TIMEOUT_MS 내 auth 메시지 필요
+  const authTimer = setTimeout(() => {
+    logger.warn('Auth timeout, closing connection', { clientId });
+    ws.close(4408, 'auth timeout');
+  }, AUTH_TIMEOUT_MS);
 
-        const payload = JSON.stringify({
-          type: 'db-changed',
-          file: msg.file || config.DB_PATH,
-          timestamp: Date.now(),
-        });
-        for (const [id, client] of clients) {
-          if (id !== clientId && client.readyState === 1) {
-            client.send(payload);
+  function registerAuthenticatedClient(): void {
+    clients.set(clientId, ws);
+    logger.info('Client authenticated', { clientId, total: String(clients.size) });
+
+    ws.on('message', (raw: WebSocket.RawData) => {
+      try {
+        const msg: ClientMessage = JSON.parse(raw.toString());
+        if (msg.type === 'init') {
+          sync.initClientRootCache(clientId);
+          return;
+        }
+        if (msg.type === 'caught-up') {
+          freshClients.add(clientId);
+          logger.info('Client caught up (fresh)', { clientId });
+          return;
+        }
+        if (msg.type === 'stream-ack') {
+          streamBuffer.acknowledge(msg.streamId);
+          return;
+        }
+        if (msg.type === 'write-notify') {
+          if (msg.file === config.DB_PATH) return;
+
+          const payload = JSON.stringify({
+            type: 'db-changed',
+            file: msg.file || config.DB_PATH,
+            timestamp: Date.now(),
+          });
+          for (const [id, client] of clients) {
+            if (id !== clientId && client.readyState === 1) {
+              client.send(payload);
+            }
           }
         }
+      } catch {
+        // 파싱 실패 무시
       }
+    });
+  }
+
+  // 인증 전 메시지 핸들러 — auth 이외의 메시지는 무시
+  const onAuthMessage = (raw: WebSocket.RawData): void => {
+    try {
+      const parsed: Record<string, unknown> = JSON.parse(raw.toString());
+      if (parsed.type !== 'auth' || typeof parsed.token !== 'string') return;
+
+      clearTimeout(authTimer);
+      ws.removeListener('message', onAuthMessage);
+
+      verifyRisuAuth(parsed.token).then((valid) => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+
+        if (!valid) {
+          ws.send(JSON.stringify({ type: 'auth-result', success: false }));
+          ws.close(4401, 'unauthorized');
+          return;
+        }
+
+        ws.send(JSON.stringify({ type: 'auth-result', success: true }));
+        registerAuthenticatedClient();
+      }).catch(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close(4401, 'auth error');
+        }
+      });
     } catch {
-      // 파싱 실패 무시
+      // parse error, ignore
     }
-  });
+  };
+
+  ws.on('message', onAuthMessage);
 
   ws.on('close', () => {
-    // 같은 clientId로 재연결된 경우, 새 ws를 삭제하지 않도록 본인 확인
+    clearTimeout(authTimer);
+    aliveState.delete(ws);
     if (clients.get(clientId) === ws) {
       clients.delete(clientId);
+      freshClients.delete(clientId);
+      sync.removeClientCache(clientId);
+      logger.info('Client disconnected', { clientId, total: String(clients.size) });
     }
-    freshClients.delete(clientId);
-    sync.removeClientCache(clientId);
-    logger.info('Client disconnected', { clientId, total: String(clients.size) });
   });
 });
 
@@ -762,12 +804,6 @@ server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) =
   const url = new URL(req.url!, `http://${req.headers.host}`);
 
   if (url.pathname === '/sync/ws') {
-    const token = url.searchParams.get('token');
-    if (token !== config.SYNC_TOKEN) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-      socket.destroy();
-      return;
-    }
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req);
     });

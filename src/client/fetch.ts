@@ -1,8 +1,9 @@
-import { CLIENT_ID, CLIENT_ID_HEADER, PROXY2_TARGET_HEADER } from './config';
+import { CLIENT_ID, CLIENT_ID_HEADER, PROXY2_TARGET_HEADER, RISU_AUTH_HEADER } from './config';
 import { state } from './state';
 import type { StreamState } from './state';
 import { showWriteFailedNotification } from './notification';
 import { extractRemoteCharId, isUnchangedRemoteBlock, ensureBufferedBody } from './dedup';
+import { capture } from './auth';
 
 /** fetch monkey-patch */
 const originalFetch = window.fetch;
@@ -99,7 +100,31 @@ async function fetchWriteWithRetry(input: RequestInfo | URL, init: RequestInit):
   throw lastError;
 }
 
+function extractHeader(headers: HeadersInit | undefined, name: string): string | null {
+  if (!headers) return null;
+  if (headers instanceof Headers) {
+    return headers.get(name);
+  }
+  if (Array.isArray(headers)) {
+    const pair = headers.find(([key]) => key.toLowerCase() === name.toLowerCase());
+    return pair ? pair[1] : null;
+  }
+  const lowerName = name.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === lowerName) {
+      return headers[key];
+    }
+  }
+  return null;
+}
+
 const patchedFetch: typeof fetch = function (input, init) {
+  // risu-auth 캡처 (WS 인증용)
+  const risuAuth = extractHeader(init?.headers, RISU_AUTH_HEADER);
+  if (risuAuth) {
+    capture(risuAuth);
+  }
+
   // POST /api/write 시 클라이언트 ID 헤더 추가 + 재시도 래핑
   if (init && init.method === 'POST' && input === '/api/write' && init.headers) {
     setHeader(init.headers, CLIENT_ID_HEADER, CLIENT_ID);
