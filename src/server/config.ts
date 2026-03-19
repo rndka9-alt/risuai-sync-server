@@ -44,7 +44,7 @@ export const RETRY_BASE_DELAY_MS = parseInt(process.env.RETRY_BASE_DELAY_MS || '
  * 정적 export 대신 함수로 제공하여 순환 의존 방지.
  */
 export function getScriptTag(bundleHash: string): string {
-  return `<script defer src="/sync/client.js?v=${bundleHash}"></script>`;
+  return `<script src="/sync/client.js?v=${bundleHash}"></script>`;
 }
 
 export {
