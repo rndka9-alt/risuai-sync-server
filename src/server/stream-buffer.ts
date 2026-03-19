@@ -9,11 +9,16 @@ interface RawResponse {
   body: Buffer;
 }
 
+export interface Destroyable {
+  destroyed: boolean;
+  destroy(): void;
+}
+
 interface BufferedStream {
   id: string;
   senderClientId: string;
   targetCharId: string | null;
-  upstreamReq: http.ClientRequest | null;
+  upstreamReq: Destroyable | null;
   accumulatedText: string;
   lineBuffer: string;
   status: 'streaming' | 'completed' | 'failed';
@@ -71,7 +76,7 @@ export function create(
   id: string,
   senderClientId: string,
   targetCharId: string | null,
-  upstreamReq: http.ClientRequest,
+  upstreamReq: Destroyable,
 ): void {
   streams.set(id, {
     id,

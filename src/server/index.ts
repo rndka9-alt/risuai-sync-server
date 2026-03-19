@@ -157,7 +157,7 @@ function proxyRemoteBlockWrite(req: http.IncomingMessage, res: http.ServerRespon
   const chunks: Buffer[] = [];
   req.on('data', (chunk: Buffer) => chunks.push(chunk));
   req.on('end', () => {
-    let buffer = Buffer.concat(chunks);
+    let buffer: Buffer = Buffer.concat(chunks);
 
     if (sync.isWriteBlockedByStream(senderClientId)) {
       logger.warn('Remote write blocked (streaming in progress)', { sender: senderClientId || 'unknown' });
@@ -306,7 +306,9 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       logger.info('Stream started', { streamId, sender: senderClientId, targetCharId: targetCharId || 'unknown' });
 
       sync.createStream(streamId, senderClientId, targetCharId);
-      streamBuffer.create(streamId, senderClientId, targetCharId, upstreamReq!);
+      if (upstreamReq) {
+        streamBuffer.create(streamId, senderClientId, targetCharId, upstreamReq);
+      }
 
       // x-sync-stream-id: 클라이언트가 재연결할 때 사용
       const responseHeaders = { ...proxyRes.headers, 'x-sync-stream-id': streamId };
@@ -595,7 +597,7 @@ const server = http.createServer((req, res) => {
         sync: {
           clients: clients.size,
           cacheInitialized: cache.cacheInitialized,
-          usePlainFetch: getUsePlainFetch(),
+          usePlainFetch: getUsePlainFetchFromDataCache(),
         },
       });
       res.writeHead(200, {

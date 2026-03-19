@@ -28,8 +28,8 @@ function makeStreamState(overrides: Partial<StreamState> = {}): StreamState {
   };
 }
 
-function makeDb(characters: Record<string, unknown>[] = []) {
-  return { characters } as { characters: Record<string, unknown>[]; [key: string]: unknown };
+function makeDb(characters: Array<{ chaId: string; [key: string]: unknown }> = []): { characters: Array<{ chaId: string; [key: string]: unknown }>; [key: string]: unknown } {
+  return { characters };
 }
 
 function makeChar(chaId: string, overrides: Record<string, unknown> = {}) {

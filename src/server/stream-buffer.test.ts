@@ -22,7 +22,7 @@ vi.mock('./logger', () => ({
   isDebug: false,
 }));
 
-function mockUpstreamReq(): http.ClientRequest {
+function mockUpstreamReq() {
   const emitter = new EventEmitter();
   return Object.assign(emitter, { destroyed: false, destroy: vi.fn(() => { emitter.emit('close'); }) });
 }
