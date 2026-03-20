@@ -1,7 +1,8 @@
+import { extractDelta } from '../../../sse-delta-format/index';
+
 /**
- * Parse SSE text to extract text deltas.
- * Handles OpenAI and Anthropic formats.
- * Best-effort: missing deltas are acceptable since final state comes from DB sync.
+ * SSE 텍스트에서 텍스트 델타를 추출한다.
+ * sse-delta-format 어댑터 패턴으로 모든 LLM 포맷을 지원한다.
  */
 export function parseSSEDeltas(raw: string): string[] {
   const deltas: string[] = [];
@@ -13,26 +14,10 @@ export function parseSSEDeltas(raw: string): string[] {
     if (payload === '[DONE]' || payload === '') continue;
 
     try {
-      const json = JSON.parse(payload);
-
-      // OpenAI format: choices[].delta.content
-      if (json.choices && Array.isArray(json.choices)) {
-        for (const choice of json.choices) {
-          const content = choice?.delta?.content;
-          if (typeof content === 'string') {
-            deltas.push(content);
-          }
-        }
-        continue;
-      }
-
-      // Anthropic format: content_block_delta → delta.text
-      if (json.type === 'content_block_delta') {
-        const text = json.delta?.text;
-        if (typeof text === 'string') {
-          deltas.push(text);
-        }
-        continue;
+      const json: Record<string, unknown> = JSON.parse(payload);
+      const delta = extractDelta(json);
+      if (delta !== null) {
+        deltas.push(delta);
       }
     } catch {
       // JSON parse failure — skip
