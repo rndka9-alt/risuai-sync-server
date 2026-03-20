@@ -4,8 +4,8 @@
  */
 export function buildPluginScript(markerKey: string): string {
   return [
-    '//@name [Proxy::sync] capture-streaming',
-    '//@display-name [Proxy::sync] capture-streaming',
+    '//@name [Proxy::sync] Send llm via proxy2',
+    '//@display-name [Proxy::sync] Send llm via proxy2',
     '//@api 3.0',
     '',
     '(async () => {',
