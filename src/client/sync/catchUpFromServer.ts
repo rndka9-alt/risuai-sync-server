@@ -14,6 +14,7 @@ export function catchUpFromServer(): void {
         reloadOnEpochMismatch('catch-up-410', state.epoch, 0);
         return null;
       }
+      if (!r.ok) return null;
       return r.json() as Promise<ChangesResponse>;
     })
     .then((data) => {

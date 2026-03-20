@@ -56,8 +56,12 @@ export async function connect(): Promise<void> {
 
         if (state.isFirstConnect) {
           syncFetch('/sync/changes?since=0&clientId=' + encodeURIComponent(CLIENT_ID))
-            .then((r) => r.json() as Promise<ChangesResponse>)
+            .then((r) => {
+              if (!r.ok) return null;
+              return r.json() as Promise<ChangesResponse>;
+            })
             .then((data) => {
+              if (!data) return;
               state.epoch = data.epoch;
               state.lastVersion = data.version;
 

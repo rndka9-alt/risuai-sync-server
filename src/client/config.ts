@@ -14,7 +14,7 @@ export const CLIENT_ID: string = Math.random().toString(36).substring(2) + Date.
 export { CLIENT_ID_HEADER, FILE_PATH_HEADER, PROXY2_TARGET_HEADER, RISU_AUTH_HEADER } from '../shared/headers';
 
 import { getToken } from './auth';
-import { RISU_AUTH_HEADER } from '../shared/headers';
+import { CLIENT_ID_HEADER, RISU_AUTH_HEADER } from '../shared/headers';
 
 /** 인증이 필요한 /sync/* 엔드포인트용 fetch wrapper */
 export function syncFetch(url: string, init?: RequestInit): Promise<Response> {
@@ -23,5 +23,6 @@ export function syncFetch(url: string, init?: RequestInit): Promise<Response> {
   if (token) {
     headers.set(RISU_AUTH_HEADER, token);
   }
+  headers.set(CLIENT_ID_HEADER, CLIENT_ID);
   return fetch(url, { ...init, headers });
 }

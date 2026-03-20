@@ -1,0 +1,1 @@
+export { isTrustedClient } from './isTrustedClient';

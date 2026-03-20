@@ -1,5 +1,5 @@
 import { getToken } from './auth';
-import { RISU_AUTH_HEADER } from './config';
+import { CLIENT_ID, CLIENT_ID_HEADER, RISU_AUTH_HEADER } from './config';
 
 /** fetch+keepalive로 서버에 로그 전송 (페이지 unload/reload 직전에도 안전) */
 export function serverLog(
@@ -8,15 +8,18 @@ export function serverLog(
   context?: Record<string, string>,
 ): void {
   const token = getToken();
-  if (!token) return;
 
   const body = JSON.stringify({ level, message, context });
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    [CLIENT_ID_HEADER]: CLIENT_ID,
+  };
+  if (token) {
+    headers[RISU_AUTH_HEADER] = token;
+  }
   fetch('/sync/log', {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      [RISU_AUTH_HEADER]: token,
-    },
+    headers,
     body,
     keepalive: true,
   }).catch(() => {});

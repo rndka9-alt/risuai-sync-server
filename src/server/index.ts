@@ -12,6 +12,8 @@ import * as logger from './logger';
 import { decodeProxy2Headers, forwardToLlm, isPrivateHost } from './utils/llmProxy';
 import * as streamBuffer from './stream-buffer';
 import { clients, aliveState, freshClients } from './serverState';
+import { isTrustedClient } from './utils/isTrustedClient';
+import { markClientTrusted } from './utils/markClientTrusted';
 import { parseRisuSaveBlocks } from './parser';
 import { sendJson } from './utils/sendJson';
 import { notifyWriteFailed } from './utils/notifyWriteFailed';
@@ -99,6 +101,14 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
       clearTimeout(authTimer);
       ws.removeListener('message', onAuthMessage);
 
+      // Grace period: 최근 인증된 clientId는 토큰 재검증 생략
+      if (isTrustedClient(clientId)) {
+        markClientTrusted(clientId);
+        ws.send(JSON.stringify({ type: 'auth-result', success: true }));
+        registerAuthenticatedClient();
+        return;
+      }
+
       verifyRisuAuth(parsed.token).then((valid) => {
         if (ws.readyState !== WebSocket.OPEN) return;
 
@@ -109,6 +119,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
         }
 
         ws.send(JSON.stringify({ type: 'auth-result', success: true }));
+        markClientTrusted(clientId);
         registerAuthenticatedClient();
       }).catch(() => {
         if (ws.readyState === WebSocket.OPEN) {
@@ -593,6 +604,15 @@ const server = http.createServer((req, res) => {
     }
 
     // /sync/client.js, /sync/health 이외의 엔드포인트는 인증 필요
+    // Grace period: 최근 WS 인증된 clientId는 토큰 재검증 생략
+    const httpClientId = typeof req.headers[config.CLIENT_ID_HEADER] === 'string'
+      ? req.headers[config.CLIENT_ID_HEADER]
+      : null;
+    if (isTrustedClient(httpClientId)) {
+      handleAuthenticatedSyncRoute(req, res, url);
+      return;
+    }
+
     const risuAuth = req.headers[config.RISU_AUTH_HEADER];
     if (typeof risuAuth !== 'string') {
       sendJson(res, 401, { error: 'unauthorized' });

@@ -34,8 +34,18 @@ const clientCacheCleanupTimer = setInterval(() => {
       clientDisconnectedAt.delete(clientId);
     }
   }
+  for (const [clientId, authedAt] of trustedClients) {
+    if (now - authedAt > TRUST_GRACE_PERIOD_MS) {
+      trustedClients.delete(clientId);
+    }
+  }
 }, 60_000);
 clientCacheCleanupTimer.unref();
+
+// ─── Grace period: WS 인증된 clientId 신뢰 ──────────────────────
+/** WS 인증 성공 시 기록. grace period 동안 HTTP/WS 재인증 시 토큰 검증 생략 */
+export const trustedClients = new Map<string, number>(); // clientId -> authenticatedAt
+export const TRUST_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000; // 24h
 
 // ─── 활성 스트림 ──────────────────────────────────────────────────
 
