@@ -1,0 +1,1 @@
+export { injectSyncPlugin } from './injectSyncPlugin';

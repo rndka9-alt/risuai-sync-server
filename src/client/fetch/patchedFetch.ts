@@ -7,6 +7,9 @@ import { extractHeader } from '../utils/extractHeader';
 import { setHeader } from './utils/setHeader';
 import { findStreamTarget } from './utils/findStreamTarget';
 import { fetchWriteWithRetry } from './utils/fetchWriteWithRetry';
+import { extractSyncMarker } from './utils/extractSyncMarker';
+import { buildProxy2Request } from './utils/redirectToProxy2';
+import { showSyncFallbackNotice } from '../notification/showSyncFallbackNotice';
 
 /** fetch monkey-patch */
 const originalFetch = window.fetch;
@@ -16,6 +19,29 @@ const patchedFetch: typeof fetch = function (input, init) {
   const risuAuth = extractHeader(init?.headers, RISU_AUTH_HEADER);
   if (risuAuth) {
     capture(risuAuth);
+  }
+
+  // 외부 LLM 직접 요청 → sync 마커 감지 시 proxy2로 리다이렉트
+  // input: string 또는 URL 객체 (fetchWithPlainFetch가 new URL(url) 사용)
+  const inputUrl = input instanceof URL ? input.toString()
+    : typeof input === 'string' ? input
+    : null;
+  if (init?.method === 'POST' && inputUrl && !inputUrl.startsWith('/')) {
+    const marker = extractSyncMarker(init.body);
+    if (marker) {
+      const proxy2Init = buildProxy2Request(inputUrl, init, marker.cleanBody);
+      return (async () => {
+        try {
+          return await patchedFetch('/proxy2', proxy2Init);
+        } catch {
+          showSyncFallbackNotice();
+          return originalFetch.call(window, inputUrl, {
+            ...init,
+            body: marker.cleanBody,
+          });
+        }
+      })();
+    }
   }
 
   // POST /api/write 시 클라이언트 ID 헤더 추가 + 재시도 래핑

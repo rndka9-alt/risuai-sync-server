@@ -15,6 +15,9 @@ import { clients, aliveState, freshClients } from './serverState';
 import { isTrustedClient } from './utils/isTrustedClient';
 import { markClientTrusted } from './utils/markClientTrusted';
 import { parseRisuSaveBlocks } from './parser';
+import { reassembleRisuSave } from './utils/reassembleRisuSave';
+import { injectSyncPlugin } from './utils/injectSyncPlugin';
+import { SYNC_MARKER_KEY } from '../shared/syncMarker';
 import { sendJson } from './utils/sendJson';
 import { notifyWriteFailed } from './utils/notifyWriteFailed';
 import { sendUpstreamWithRetry } from './utils/sendUpstreamWithRetry';
@@ -314,10 +317,20 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
   const chunks: Buffer[] = [];
   req.on('data', (chunk: Buffer) => chunks.push(chunk));
   req.on('end', () => {
-    const body = Buffer.concat(chunks);
+    let body = Buffer.concat(chunks);
 
     // Body 수신 완료 전에 이미 연결 끊김
     if (clientDisconnected) return;
+
+    // 방어적 마커 제거: LLM API에 마커가 전달되지 않도록 strip
+    const bodyStr = body.toString('utf-8');
+    if (bodyStr.includes(SYNC_MARKER_KEY)) {
+      try {
+        const parsed: Record<string, unknown> = JSON.parse(bodyStr);
+        delete parsed[SYNC_MARKER_KEY];
+        body = Buffer.from(JSON.stringify(parsed), 'utf-8');
+      } catch { /* JSON 파싱 실패 시 원본 유지 */ }
+    }
 
     // SSE 응답 공통 핸들러
     const onResponse = (proxyRes: http.IncomingMessage): void => {
@@ -790,7 +803,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // --- database.bin read → usePlainFetch 감지 ---
+  // --- database.bin read → 플러그인 주입 + usePlainFetch 감지 ---
   if (sync.isDbRead(req)) {
     const proxyReq = http.request(
       {
@@ -801,27 +814,40 @@ const server = http.createServer((req, res) => {
         headers: { ...req.headers, host: config.UPSTREAM.host },
       },
       (proxyRes) => {
-        res.writeHead(proxyRes.statusCode!, proxyRes.headers);
-
         const chunks: Buffer[] = [];
         proxyRes.on('data', (chunk: Buffer) => {
-          res.write(chunk);
           chunks.push(chunk);
         });
         proxyRes.on('end', () => {
-          res.end();
+          const originalBuf = Buffer.concat(chunks);
+          let responseBuf = originalBuf;
+
           if (proxyRes.statusCode! >= 200 && proxyRes.statusCode! < 300) {
-            const parsed = parseRisuSaveBlocks(Buffer.concat(chunks));
-            if (!parsed) return;
-            const rootBlock = parsed.blocks.get('root');
-            if (!rootBlock) return;
             try {
-              const root: Record<string, unknown> = JSON.parse(rootBlock.json);
-              if (root.usePlainFetch === true) {
-                broadcastPlainFetchWarning();
+              const parsed = parseRisuSaveBlocks(originalBuf);
+              if (parsed) {
+                const rootBlock = parsed.blocks.get('root');
+                if (rootBlock) {
+                  const root: Record<string, unknown> = JSON.parse(rootBlock.json);
+                  if (root.usePlainFetch === true) {
+                    broadcastPlainFetchWarning();
+                  }
+
+                  const modifiedJson = injectSyncPlugin(rootBlock.json);
+                  if (modifiedJson !== rootBlock.json) {
+                    const reassembled = reassembleRisuSave(originalBuf, modifiedJson);
+                    if (reassembled) responseBuf = reassembled;
+                  }
+                }
               }
-            } catch { /* ignore */ }
+            } catch { /* fallback: 원본 전송 */ }
           }
+
+          const headers = { ...proxyRes.headers };
+          headers['content-length'] = String(responseBuf.length);
+          delete headers['transfer-encoding'];
+          res.writeHead(proxyRes.statusCode!, headers);
+          res.end(responseBuf);
         });
       },
     );
