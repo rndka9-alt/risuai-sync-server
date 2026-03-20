@@ -2,6 +2,7 @@ import { CLIENT_ID, syncFetch } from './config';
 import { state, MAX_RECONNECT_DELAY } from './state';
 import { catchUpFromServer, sendCaughtUp, restoreActiveStreams, handleBlocksChanged, handleStreamStart, handleStreamData, handleStreamEnd, processPendingStreams } from './sync';
 import { showNotification, showWriteFailedNotification, showPlainFetchWarning } from './notification';
+import { reloadOnEpochMismatch } from './epochReload';
 import type { ServerMessage, ChangesResponse } from '../shared/types';
 import { getToken, waitForToken } from './auth';
 
@@ -43,6 +44,12 @@ export async function connect(): Promise<void> {
       const msg: ServerMessage = JSON.parse(event.data);
 
       if (msg.type === 'auth-result') {
+        // epoch 불일치 감지: auth 성공/실패와 무관하게 서버 재시작 시 reload
+        if (msg.epoch && state.epoch && state.epoch !== msg.epoch) {
+          reloadOnEpochMismatch('auth-result', state.epoch, msg.epoch);
+          return;
+        }
+
         if (!msg.success) {
           console.error('[Sync] Auth failed');
           return; // onclose → scheduleReconnect

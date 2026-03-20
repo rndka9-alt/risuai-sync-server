@@ -30,6 +30,7 @@ export type ServerMessage =
 export interface AuthResultMessage {
   type: 'auth-result';
   success: boolean;
+  epoch: number;
 }
 
 export interface BlocksChangedMessage extends Versioned {

@@ -107,7 +107,7 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
       // Grace period: 최근 인증된 clientId는 토큰 재검증 생략
       if (isTrustedClient(clientId)) {
         markClientTrusted(clientId);
-        ws.send(JSON.stringify({ type: 'auth-result', success: true }));
+        ws.send(JSON.stringify({ type: 'auth-result', success: true, epoch: cache.epoch }));
         registerAuthenticatedClient();
         return;
       }
@@ -116,12 +116,12 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
         if (ws.readyState !== WebSocket.OPEN) return;
 
         if (!valid) {
-          ws.send(JSON.stringify({ type: 'auth-result', success: false }));
+          ws.send(JSON.stringify({ type: 'auth-result', success: false, epoch: cache.epoch }));
           ws.close(4401, 'unauthorized');
           return;
         }
 
-        ws.send(JSON.stringify({ type: 'auth-result', success: true }));
+        ws.send(JSON.stringify({ type: 'auth-result', success: true, epoch: cache.epoch }));
         markClientTrusted(clientId);
         registerAuthenticatedClient();
       }).catch(() => {
