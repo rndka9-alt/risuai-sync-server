@@ -25,6 +25,7 @@ import { proxyRequest } from './utils/proxyRequest';
 import { broadcastPlainFetchWarning } from './utils/broadcast';
 import { verifyRisuAuth } from './utils/verifyRisuAuth';
 import { handleClientLog } from './utils/handleClientLog';
+import { hashRequestBody } from './utils/hashRequestBody';
 
 function getUsePlainFetchFromDataCache(): boolean | null {
   const rootData = cache.dataCache.get('root');
@@ -71,10 +72,8 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
           logger.info('Client caught up (fresh)', { clientId });
           return;
         }
-        if (msg.type === 'stream-ack') {
-          streamBuffer.acknowledge(msg.streamId);
-          return;
-        }
+        // stream-ack: 캐시 재생 방식 전환으로 더 이상 사용하지 않음.
+        // 버퍼는 replay() 시 삭제되거나 TTL로 정리된다.
         if (msg.type === 'write-notify') {
           if (msg.file === config.DB_PATH) return;
 
@@ -303,6 +302,27 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       } catch { /* JSON 파싱 실패 시 원본 유지 */ }
     }
 
+    // 캐시 재생: 동일 요청에 대한 완료된 버퍼가 있으면 재생
+    const hashTargetUrl = decoded ? decoded.targetUrl.href : (req.url || '/proxy2');
+    const requestHash = hashRequestBody(body, hashTargetUrl);
+    const cached = streamBuffer.findByHash(requestHash);
+    if (cached) {
+      if (cached.status === 'completed') {
+        logger.info('Replaying cached response', { streamId: cached.id, sender: senderClientId, hash: requestHash.slice(0, 12) });
+        if (!streamBuffer.replay(cached.id, res)) {
+          res.writeHead(502, { 'content-type': 'text/plain' });
+          res.end('Cache replay failed');
+        }
+      } else {
+        logger.info('Joining in-progress stream', { streamId: cached.id, sender: senderClientId, hash: requestHash.slice(0, 12) });
+        if (!streamBuffer.subscribeRaw(cached.id, res)) {
+          res.writeHead(502, { 'content-type': 'text/plain' });
+          res.end('Stream subscribe failed');
+        }
+      }
+      return;
+    }
+
     // SSE 응답 공통 핸들러
     const onResponse = (proxyRes: http.IncomingMessage): void => {
       const contentType = proxyRes.headers['content-type'] || '';
@@ -327,6 +347,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
             nonStreamId, senderClientId, targetCharId,
             proxyRes.statusCode!, proxyRes.headers, responseBody,
           );
+          streamBuffer.setRequestHash(nonStreamId, requestHash);
 
           if (extractedText) {
             sync.broadcastResponseCompleted(
@@ -348,9 +369,11 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       if (upstreamReq) {
         streamBuffer.create(streamId, senderClientId, targetCharId, upstreamReq);
       }
+      streamBuffer.setRequestHash(streamId, requestHash);
 
       // x-sync-stream-id: 클라이언트가 재연결할 때 사용
       const responseHeaders = { ...proxyRes.headers, 'x-sync-stream-id': streamId };
+      streamBuffer.setResponseMeta(streamId, proxyRes.statusCode!, responseHeaders);
 
       if (!clientDisconnected) {
         res.writeHead(proxyRes.statusCode!, responseHeaders);

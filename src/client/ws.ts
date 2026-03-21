@@ -51,11 +51,10 @@ export async function connect(): Promise<void> {
         }
 
         if (!msg.success) {
-          console.error('[Sync] Auth failed');
+          // Auth failed — onclose → scheduleReconnect
           return; // onclose → scheduleReconnect
         }
 
-        console.log('[Sync] Connected');
         state.reconnectDelay = 1000;
 
         state.ws!.send(JSON.stringify({ type: 'init' }));

@@ -14,6 +14,11 @@ export interface Destroyable {
   destroy(): void;
 }
 
+interface ResponseMeta {
+  status: number;
+  headers: http.IncomingHttpHeaders;
+}
+
 interface BufferedStream {
   id: string;
   senderClientId: string;
@@ -28,6 +33,14 @@ interface BufferedStream {
   error?: string;
   /** Non-SSE 응답 전체 (설정 시 subscribe가 raw HTTP로 응답) */
   rawResponse: RawResponse | null;
+  /** 요청 body+URL 해시 (캐시 재생용) */
+  requestHash: string | null;
+  /** SSE 원본 청크 (캐시 재생용) */
+  rawChunks: Buffer[];
+  /** SSE 응답 메타 (status + headers, 캐시 재생용) */
+  responseMeta: ResponseMeta | null;
+  /** raw 청크를 그대로 받는 구독자 (캐시 재생 pending용) */
+  rawSubscribers: Set<http.ServerResponse>;
 }
 
 const streams = new Map<string, BufferedStream>();
@@ -90,12 +103,22 @@ export function create(
     createdAt: Date.now(),
     completedAt: null,
     rawResponse: null,
+    requestHash: null,
+    rawChunks: [],
+    responseMeta: null,
+    rawSubscribers: new Set(),
   });
 }
 
 export function addChunk(id: string, chunk: Buffer): void {
   const stream = streams.get(id);
   if (!stream || stream.status !== 'streaming') return;
+
+  stream.rawChunks.push(chunk);
+
+  for (const sub of stream.rawSubscribers) {
+    if (!sub.writableEnded) sub.write(chunk);
+  }
 
   stream.lineBuffer += chunk.toString('utf-8');
   const lastNewline = stream.lineBuffer.lastIndexOf('\n');
@@ -141,6 +164,11 @@ export function complete(id: string): void {
     }
   }
   stream.subscribers.clear();
+
+  for (const sub of stream.rawSubscribers) {
+    if (!sub.writableEnded) sub.end();
+  }
+  stream.rawSubscribers.clear();
 }
 
 export function fail(id: string, error: string): void {
@@ -159,6 +187,11 @@ export function fail(id: string, error: string): void {
     }
   }
   stream.subscribers.clear();
+
+  for (const sub of stream.rawSubscribers) {
+    if (!sub.writableEnded) sub.end();
+  }
+  stream.rawSubscribers.clear();
 }
 
 /**
@@ -192,6 +225,11 @@ export function abort(id: string): boolean {
     }
   }
   stream.subscribers.clear();
+
+  for (const sub of stream.rawSubscribers) {
+    if (!sub.writableEnded) sub.end();
+  }
+  stream.rawSubscribers.clear();
   return true;
 }
 
@@ -224,6 +262,10 @@ export function storeResponse(
     createdAt: Date.now(),
     completedAt: Date.now(),
     rawResponse: { status, headers, body },
+    requestHash: null,
+    rawChunks: [],
+    responseMeta: null,
+    rawSubscribers: new Set(),
   });
 
   return extractedText;
@@ -323,6 +365,102 @@ export function getCompletedPending(): Array<{
     }
   }
   return result;
+}
+
+/** 요청 해시 설정 (캐시 재생 매칭용) */
+export function setRequestHash(id: string, hash: string): void {
+  const stream = streams.get(id);
+  if (stream) {
+    stream.requestHash = hash;
+  }
+}
+
+/** SSE 응답 메타 저장 (status + headers, 캐시 재생용) */
+export function setResponseMeta(id: string, status: number, headers: http.IncomingHttpHeaders): void {
+  const stream = streams.get(id);
+  if (stream) {
+    stream.responseMeta = { status, headers };
+  }
+}
+
+/** 요청 해시가 일치하는 스트림 찾기 (completed 또는 streaming) */
+export function findByHash(hash: string): { id: string; status: 'completed' | 'streaming' } | null {
+  for (const stream of streams.values()) {
+    if (stream.requestHash === hash && (stream.status === 'completed' || stream.status === 'streaming')) {
+      return { id: stream.id, status: stream.status };
+    }
+  }
+  return null;
+}
+
+/**
+ * streaming 중인 스트림에 raw 구독자로 합류.
+ * 기존 rawChunks를 먼저 전송하고, 이후 청크를 라이브로 전달.
+ * 스트림 완료/실패 시 자동 종료.
+ */
+export function subscribeRaw(id: string, res: http.ServerResponse): boolean {
+  const stream = streams.get(id);
+  if (!stream || !stream.responseMeta) return false;
+
+  const headers = { ...stream.responseMeta.headers };
+  delete headers['transfer-encoding'];
+  res.writeHead(stream.responseMeta.status, headers);
+
+  // 이미 수신된 청크 전송
+  for (const chunk of stream.rawChunks) {
+    res.write(chunk);
+  }
+
+  // 이미 완료된 경우
+  if (stream.status !== 'streaming') {
+    res.end();
+    return true;
+  }
+
+  // 라이브 구독
+  stream.rawSubscribers.add(res);
+  res.on('close', () => {
+    stream.rawSubscribers.delete(res);
+  });
+  return true;
+}
+
+/**
+ * 캐시된 응답을 HTTP response로 재생.
+ * Non-SSE: rawResponse 그대로 전송.
+ * SSE: responseMeta + rawChunks 그대로 전송.
+ * 재생 후 엔트리 삭제.
+ */
+export function replay(id: string, res: http.ServerResponse): boolean {
+  const stream = streams.get(id);
+  if (!stream || stream.status !== 'completed') return false;
+
+  // Non-SSE: 원본 응답 그대로
+  if (stream.rawResponse) {
+    const raw = stream.rawResponse;
+    const headers = { ...raw.headers };
+    headers['content-length'] = String(raw.body.length);
+    delete headers['transfer-encoding'];
+    res.writeHead(raw.status, headers);
+    res.end(raw.body);
+    streams.delete(id);
+    return true;
+  }
+
+  // SSE: 원본 청크 그대로
+  if (stream.responseMeta && stream.rawChunks.length > 0) {
+    const headers = { ...stream.responseMeta.headers };
+    delete headers['transfer-encoding'];
+    res.writeHead(stream.responseMeta.status, headers);
+    for (const chunk of stream.rawChunks) {
+      res.write(chunk);
+    }
+    res.end();
+    streams.delete(id);
+    return true;
+  }
+
+  return false;
 }
 
 /** For testing */

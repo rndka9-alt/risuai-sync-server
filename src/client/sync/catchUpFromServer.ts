@@ -30,7 +30,6 @@ export function catchUpFromServer(): void {
         return;
       }
       state.lastVersion = data.version;
-
       // 블록별 마지막 operation 추적 (changed vs deleted)
       const lastOp: Record<string, { op: 'changed'; block: BlockChange } | { op: 'deleted' }> = {};
       data.changes.forEach((entry: ChangeLogEntry) => {
