@@ -365,9 +365,34 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       activeStreamId = streamId;
       logger.info('Stream started', { streamId, sender: senderClientId, targetCharId: targetCharId || 'unknown' });
 
+      const streamTargetUrl = decoded ? decoded.targetUrl.href : '';
+      let streamModel = '';
+      let streamInputPreview = '';
+      let streamMessageCount = 0;
+      try {
+        const bodyObj: unknown = JSON.parse(body.toString('utf-8'));
+        if (typeof bodyObj === 'object' && bodyObj !== null) {
+          const rec = bodyObj as Record<string, unknown>;
+          if (typeof rec.model === 'string') streamModel = rec.model;
+          if (Array.isArray(rec.messages)) {
+            streamMessageCount = rec.messages.length;
+            for (let i = rec.messages.length - 1; i >= 0; i--) {
+              const msg = rec.messages[i] as Record<string, unknown>;
+              if (msg.role === 'user') {
+                const content = typeof msg.content === 'string'
+                  ? msg.content
+                  : JSON.stringify(msg.content);
+                streamInputPreview = content.slice(0, 500);
+                break;
+              }
+            }
+          }
+        }
+      } catch { /* not JSON */ }
+
       sync.createStream(streamId, senderClientId, targetCharId);
       if (upstreamReq) {
-        streamBuffer.create(streamId, senderClientId, targetCharId, upstreamReq);
+        streamBuffer.create(streamId, senderClientId, targetCharId, upstreamReq, streamTargetUrl, streamModel, streamInputPreview, streamMessageCount);
       }
       streamBuffer.setRequestHash(streamId, requestHash);
 
@@ -576,6 +601,21 @@ const server = http.createServer((req, res) => {
     }
     logger.info('Response', logFields);
   });
+
+  // --- /_internal/* (인증 불필요, Caddy에서 외부 차단) ---
+  if (req.method === 'GET' && req.url === '/_internal/streams') {
+    const now = Date.now();
+    const active = streamBuffer.getActiveStreamsDetailed().map((s) => ({
+      ...s,
+      elapsedMs: now - s.createdAt,
+    }));
+    const recent = streamBuffer.getRecentStreamsDetailed(5).map((s) => ({
+      ...s,
+      elapsedMs: (s.completedAt ?? now) - s.createdAt,
+    }));
+    sendJson(res, 200, { active, recent, total: active.length });
+    return;
+  }
 
   // --- /sync/* 경로 ---
   if (req.url!.startsWith('/sync/')) {

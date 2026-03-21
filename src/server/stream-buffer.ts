@@ -25,6 +25,10 @@ interface BufferedStream {
   targetCharId: string | null;
   upstreamReq: Destroyable | null;
   accumulatedText: string;
+  targetUrl: string;
+  model: string;
+  inputPreview: string;
+  messageCount: number;
   lineBuffer: string;
   status: 'streaming' | 'completed' | 'failed';
   subscribers: Set<http.ServerResponse>;
@@ -90,6 +94,10 @@ export function create(
   senderClientId: string,
   targetCharId: string | null,
   upstreamReq: Destroyable,
+  targetUrl: string = '',
+  model: string = '',
+  inputPreview: string = '',
+  messageCount: number = 0,
 ): void {
   streams.set(id, {
     id,
@@ -97,6 +105,10 @@ export function create(
     targetCharId,
     upstreamReq,
     accumulatedText: '',
+    targetUrl,
+    model,
+    inputPreview,
+    messageCount,
     lineBuffer: '',
     status: 'streaming',
     subscribers: new Set(),
@@ -325,6 +337,17 @@ export interface StreamInfo {
   createdAt: number;
 }
 
+export interface StreamInfoDetailed extends StreamInfo {
+  targetUrl: string;
+  model: string;
+  inputPreview: string;
+  messageCount: number;
+  outputPreview: string;
+  completedAt: number | null;
+}
+
+const OUTPUT_PREVIEW_LENGTH = 500;
+
 /** 활성 스트림 목록 (헤더 수신 전 끊긴 클라이언트가 자기 스트림을 찾을 때 사용) */
 export function getActiveStreams(): StreamInfo[] {
   const result: StreamInfo[] = [];
@@ -341,6 +364,44 @@ export function getActiveStreams(): StreamInfo[] {
     }
   }
   return result;
+}
+
+function toDetailed(stream: BufferedStream): StreamInfoDetailed {
+  return {
+    id: stream.id,
+    senderClientId: stream.senderClientId,
+    targetCharId: stream.targetCharId,
+    status: stream.status,
+    textLength: stream.accumulatedText.length,
+    createdAt: stream.createdAt,
+    targetUrl: stream.targetUrl,
+    model: stream.model,
+    inputPreview: stream.inputPreview,
+    messageCount: stream.messageCount,
+    outputPreview: stream.accumulatedText.slice(-OUTPUT_PREVIEW_LENGTH),
+    completedAt: stream.completedAt,
+  };
+}
+
+export function getActiveStreamsDetailed(): StreamInfoDetailed[] {
+  const result: StreamInfoDetailed[] = [];
+  for (const stream of streams.values()) {
+    if (stream.status === 'streaming') {
+      result.push(toDetailed(stream));
+    }
+  }
+  return result;
+}
+
+export function getRecentStreamsDetailed(limit: number): StreamInfoDetailed[] {
+  const completed: StreamInfoDetailed[] = [];
+  for (const stream of streams.values()) {
+    if (stream.status === 'completed' || stream.status === 'failed') {
+      completed.push(toDetailed(stream));
+    }
+  }
+  completed.sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
+  return completed.slice(0, limit);
 }
 
 /** 보관소: ACK 수신 시 버퍼 삭제 */
