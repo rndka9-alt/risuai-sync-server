@@ -664,31 +664,6 @@ describe('streaming', () => {
     expect(() => sync.endStream('nonexistent')).not.toThrow();
   });
 
-  it('findActiveStreamForChar finds active stream', () => {
-    sync.createStream('s1', 'client-a', 'char1');
-
-    expect(sync.findActiveStreamForChar('char1')).not.toBeNull();
-    expect(sync.findActiveStreamForChar('char2')).toBeNull();
-    expect(sync.findActiveStreamForChar(null)).toBeNull();
-
-    sync.endStream('s1');
-    expect(sync.findActiveStreamForChar('char1')).toBeNull();
-  });
-
-  it('isWriteBlockedByStream blocks other clients during stream', () => {
-    expect(sync.isWriteBlockedByStream('client-b')).toBe(false);
-
-    sync.createStream('s1', 'client-a', 'char1');
-
-    // client-b is blocked because client-a is streaming
-    expect(sync.isWriteBlockedByStream('client-b')).toBe(true);
-    // client-a (the streamer) is not blocked by its own stream
-    expect(sync.isWriteBlockedByStream('client-a')).toBe(false);
-
-    sync.endStream('s1');
-    expect(sync.isWriteBlockedByStream('client-b')).toBe(false);
-  });
-
   it('endStream excludes sender by default', () => {
     sync.createStream('s1', 'client-a', 'char1');
     clearSent(clientA);
@@ -945,6 +920,7 @@ describe('write ordering (remote block)', () => {
 
 describe('zombie stream cleanup', () => {
   let sync: typeof import('./sync');
+  let serverState: typeof import('./serverState');
   let clientA: ReturnType<typeof createMockWs>;
   let clientB: ReturnType<typeof createMockWs>;
 
@@ -954,7 +930,7 @@ describe('zombie stream cleanup', () => {
     await import('./cache');
     sync = await import('./sync');
 
-    const serverState = await import('./serverState');
+    serverState = await import('./serverState');
     serverState.clients.clear();
     serverState.freshClients.clear();
     clientA = createMockWs();
@@ -975,15 +951,13 @@ describe('zombie stream cleanup', () => {
     clearSent(clientB);
 
     // Stream should still be active before TTL
-    expect(sync.findActiveStreamForChar('char1')).not.toBeNull();
-    expect(sync.isWriteBlockedByStream('client-b')).toBe(true);
+    expect(serverState.activeStreams.has('s1')).toBe(true);
 
     // Advance past TTL (30 min) + cleanup interval (1 min)
     vi.advanceTimersByTime(31 * 60_000);
 
     // Stream should be cleaned up — endStream broadcasts stream-end
-    expect(sync.findActiveStreamForChar('char1')).toBeNull();
-    expect(sync.isWriteBlockedByStream('client-b')).toBe(false);
+    expect(serverState.activeStreams.has('s1')).toBe(false);
 
     // Verify stream-end was broadcast to non-sender
     const bMsgs = sentMessages(clientB);
@@ -998,8 +972,7 @@ describe('zombie stream cleanup', () => {
     // 20 minutes — still within TTL
     vi.advanceTimersByTime(20 * 60_000);
 
-    expect(sync.findActiveStreamForChar('char1')).not.toBeNull();
-    expect(sync.isWriteBlockedByStream('client-b')).toBe(true);
+    expect(serverState.activeStreams.has('s1')).toBe(true);
 
     sync.endStream('s1');
   });

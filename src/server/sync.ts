@@ -28,5 +28,5 @@ export { hexDecodeFilePath, isDbWrite, isDbRead, isRemoteBlockWrite, extractChar
 export { processDbWrite } from './utils/processDbWrite';
 export { processRemoteBlockWrite } from './utils/processRemoteBlockWrite';
 export { broadcast, broadcastDbChanged, broadcastResponseCompleted } from './utils/broadcast';
-export { createStream, processStreamChunk, endStream, findActiveStreamForChar, isWriteBlockedByStream, markSenderDisconnected } from './utils/streaming';
+export { createStream, processStreamChunk, endStream, markSenderDisconnected } from './utils/streaming';
 export { reserveDbWrite, enqueueDbWrite, skipDbWrite, reserveRemoteWrite, enqueueRemoteWrite, skipRemoteWrite } from './utils/writeQueue';

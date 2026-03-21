@@ -170,13 +170,6 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
   req.on('end', () => {
     const buffer = Buffer.concat(chunks);
 
-    // Streaming protection: 다른 기기의 스트리밍 중 write 차단
-    if (sync.isWriteBlockedByStream(senderClientId)) {
-      logger.warn('Write blocked (streaming in progress)', { sender: senderClientId || 'unknown' });
-      sendJson(res, 409, { error: 'streaming_in_progress', message: 'Write blocked: streaming in progress' });
-      return;
-    }
-
     const seq = sync.reserveDbWrite();
     const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: config.UPSTREAM.host };
     delete headers[config.CLIENT_ID_HEADER];
@@ -216,12 +209,6 @@ function proxyRemoteBlockWrite(req: http.IncomingMessage, res: http.ServerRespon
   req.on('data', (chunk: Buffer) => chunks.push(chunk));
   req.on('end', () => {
     let buffer: Buffer = Buffer.concat(chunks);
-
-    if (sync.isWriteBlockedByStream(senderClientId)) {
-      logger.warn('Remote write blocked (streaming in progress)', { sender: senderClientId || 'unknown' });
-      sendJson(res, 409, { error: 'streaming_in_progress', message: 'Write blocked: streaming in progress' });
-      return;
-    }
 
     // Stale 클라이언트: 서버 캐시와 union merge하여 데이터 소실 방지
     if (charId && senderClientId && !sync.isClientFresh(senderClientId)) {
@@ -273,22 +260,6 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
   const senderClientId = typeof rawClientId === 'string' ? rawClientId : 'unknown';
   const rawTargetCharId = req.headers[config.PROXY2_TARGET_HEADER];
   const targetCharId = typeof rawTargetCharId === 'string' ? rawTargetCharId : null;
-
-  // Streaming protection: 동일 캐릭터에 대한 다른 기기의 proxy2 요청 차단
-  const existingStream = sync.findActiveStreamForChar(targetCharId);
-  if (existingStream && existingStream.senderClientId !== senderClientId) {
-    logger.warn('proxy2 blocked (active stream)', {
-      sender: senderClientId,
-      targetCharId: targetCharId || 'unknown',
-      existingStreamId: existingStream.id,
-    });
-    sendJson(res, 409, {
-      error: 'streaming_in_progress',
-      streamId: existingStream.id,
-      targetCharId: existingStream.targetCharId,
-    });
-    return;
-  }
 
   // LLM 직접 프록시 디코딩 시도 (body 소비 전에 헤더만 읽음)
   const decoded = decodeProxy2Headers(req);
