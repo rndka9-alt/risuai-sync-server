@@ -6,13 +6,13 @@ import { finalizeStream } from './finalizeStream';
 
 declare var __pluginApis__: PluginApis | undefined;
 
-/** 최종 텍스트 적용 + isStreaming 해제 */
+/** 최종 텍스트 적용 + isStreaming 해제. 성공 시 true 반환 */
 export function applyFinalText(
   targetCharId: string,
   text: string,
   existingState: StreamState | undefined,
-): void {
-  if (typeof __pluginApis__ === 'undefined') return;
+): boolean {
+  if (typeof __pluginApis__ === 'undefined') return false;
   try {
     const db = __pluginApis__.getDatabase();
 
@@ -20,7 +20,7 @@ export function applyFinalText(
       existingState.lastText = text;
       applyStreamText(existingState, db);
       finalizeStream(existingState);
-      return;
+      return true;
     }
 
     // resolved 안 된 경우 → 임시 StreamState로 resolve 시도
@@ -36,8 +36,10 @@ export function applyFinalText(
     if (resolveStreamTarget(tempState, db)) {
       applyStreamText(tempState, db);
       finalizeStream(tempState);
+      return true;
     }
+    return false;
   } catch {
-    // Non-fatal
+    return false;
   }
 }
