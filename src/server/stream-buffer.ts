@@ -404,6 +404,14 @@ export function getRecentStreamsDetailed(limit: number): StreamInfoDetailed[] {
   return completed.slice(0, limit);
 }
 
+export function getTextLength(id: string): number {
+  return streams.get(id)?.accumulatedText.length ?? 0;
+}
+
+export function getOutputPreview(id: string, maxLength: number): string {
+  return streams.get(id)?.accumulatedText.slice(-maxLength) ?? '';
+}
+
 /** 보관소: ACK 수신 시 버퍼 삭제 */
 export function acknowledge(id: string): boolean {
   return streams.delete(id);

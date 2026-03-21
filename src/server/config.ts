@@ -47,6 +47,9 @@ export function getScriptTag(bundleHash: string): string {
   return `<script src="/sync/client.js?v=${bundleHash}"></script>`;
 }
 
+/** Monitor push URL. 설정하지 않으면 push 안 함. */
+export const MONITOR_URL = process.env.MONITOR_URL || '';
+
 export {
   CLIENT_ID_HEADER,
   FILE_PATH_HEADER,

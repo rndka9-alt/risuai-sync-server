@@ -26,6 +26,7 @@ import { broadcastPlainFetchWarning } from './utils/broadcast';
 import { verifyRisuAuth } from './utils/verifyRisuAuth';
 import { handleClientLog } from './utils/handleClientLog';
 import { hashRequestBody } from './utils/hashRequestBody';
+import { pushLlmEvent } from './utils/monitorPush';
 
 function getUsePlainFetchFromDataCache(): boolean | null {
   const rootData = cache.dataCache.get('root');
@@ -302,6 +303,20 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       } catch { /* JSON 파싱 실패 시 원본 유지 */ }
     }
 
+    const llmTargetUrl = decoded ? decoded.targetUrl.href : '';
+    const llmStartTime = Date.now();
+    const llmStreamId = crypto.randomBytes(8).toString('hex');
+
+    pushLlmEvent({
+      type: 'start',
+      streamId: llmStreamId,
+      sender: senderClientId,
+      targetCharId,
+      targetUrl: llmTargetUrl,
+      requestBody: body.toString('utf-8'),
+      timestamp: llmStartTime,
+    });
+
     // 캐시 재생: 동일 요청에 대한 완료된 버퍼가 있으면 재생
     const hashTargetUrl = decoded ? decoded.targetUrl.href : (req.url || '/proxy2');
     const requestHash = hashRequestBody(body, hashTargetUrl);
@@ -355,6 +370,16 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
             );
           }
 
+          pushLlmEvent({
+            type: 'end',
+            streamId: llmStreamId,
+            responseType: 'non-sse',
+            duration: Date.now() - llmStartTime,
+            textLength: extractedText.length,
+            outputPreview: extractedText.slice(-500),
+            status: proxyRes.statusCode,
+          });
+
           if (!clientDisconnected && !res.writableEnded) res.end();
         });
         return;
@@ -365,34 +390,9 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       activeStreamId = streamId;
       logger.info('Stream started', { streamId, sender: senderClientId, targetCharId: targetCharId || 'unknown' });
 
-      const streamTargetUrl = decoded ? decoded.targetUrl.href : '';
-      let streamModel = '';
-      let streamInputPreview = '';
-      let streamMessageCount = 0;
-      try {
-        const bodyObj: unknown = JSON.parse(body.toString('utf-8'));
-        if (typeof bodyObj === 'object' && bodyObj !== null) {
-          const rec = bodyObj as Record<string, unknown>;
-          if (typeof rec.model === 'string') streamModel = rec.model;
-          if (Array.isArray(rec.messages)) {
-            streamMessageCount = rec.messages.length;
-            for (let i = rec.messages.length - 1; i >= 0; i--) {
-              const msg = rec.messages[i] as Record<string, unknown>;
-              if (msg.role === 'user') {
-                const content = typeof msg.content === 'string'
-                  ? msg.content
-                  : JSON.stringify(msg.content);
-                streamInputPreview = content.slice(0, 500);
-                break;
-              }
-            }
-          }
-        }
-      } catch { /* not JSON */ }
-
       sync.createStream(streamId, senderClientId, targetCharId);
       if (upstreamReq) {
-        streamBuffer.create(streamId, senderClientId, targetCharId, upstreamReq, streamTargetUrl, streamModel, streamInputPreview, streamMessageCount);
+        streamBuffer.create(streamId, senderClientId, targetCharId, upstreamReq, llmTargetUrl);
       }
       streamBuffer.setRequestHash(streamId, requestHash);
 
@@ -412,6 +412,15 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
 
       proxyRes.on('end', () => {
         logger.info('Stream ended', { streamId });
+        pushLlmEvent({
+          type: 'end',
+          streamId: llmStreamId,
+          responseType: 'sse',
+          duration: Date.now() - llmStartTime,
+          textLength: streamBuffer.getTextLength(streamId),
+          outputPreview: streamBuffer.getOutputPreview(streamId, 500),
+          status: proxyRes.statusCode,
+        });
         if (activeStreamId === streamId) {
           sync.endStream(streamId);
           activeStreamId = null;
@@ -425,6 +434,16 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
         if (!clientDisconnected) {
           logger.error('Stream error', { streamId, error: err.message });
         }
+        pushLlmEvent({
+          type: 'end',
+          streamId: llmStreamId,
+          responseType: 'sse',
+          duration: Date.now() - llmStartTime,
+          textLength: streamBuffer.getTextLength(streamId),
+          outputPreview: streamBuffer.getOutputPreview(streamId, 500),
+          status: 0,
+          error: err.message,
+        });
         if (activeStreamId === streamId) {
           sync.endStream(streamId);
           activeStreamId = null;
@@ -435,6 +454,16 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
     };
 
     const onError = (err: Error): void => {
+      pushLlmEvent({
+        type: 'end',
+        streamId: llmStreamId,
+        responseType: 'error',
+        duration: Date.now() - llmStartTime,
+        textLength: 0,
+        outputPreview: '',
+        status: 502,
+        error: err.message,
+      });
       if (clientDisconnected) return;
       logger.error('proxy2 error', { error: err.message });
       if (!res.headersSent) {
