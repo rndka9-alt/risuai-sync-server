@@ -370,6 +370,13 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
             );
           }
 
+          const resContentType = typeof proxyRes.headers['content-type'] === 'string'
+            ? proxyRes.headers['content-type']
+            : '';
+          const isBinaryResponse = resContentType.startsWith('image/') ||
+            resContentType.includes('zip') ||
+            resContentType.includes('octet-stream');
+
           pushLlmEvent({
             type: 'end',
             streamId: llmStreamId,
@@ -378,6 +385,10 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
             textLength: extractedText.length,
             outputPreview: extractedText.slice(-500),
             status: proxyRes.statusCode,
+            responseContentType: resContentType,
+            ...(isBinaryResponse ? {
+              responseBody: responseBody.toString('base64'),
+            } : {}),
           });
 
           if (!clientDisconnected && !res.writableEnded) res.end();
