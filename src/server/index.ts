@@ -269,10 +269,19 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
   let clientDisconnected = false;
   let activeStreamId: string | null = null;
   let upstreamReq: http.ClientRequest | null = null;
+  let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+
+  const clearKeepAlive = (): void => {
+    if (keepAliveTimer) {
+      clearInterval(keepAliveTimer);
+      keepAliveTimer = null;
+    }
+  };
 
   res.on('close', () => {
     if (clientDisconnected) return;
     clientDisconnected = true;
+    clearKeepAlive();
 
     // SSE 스트리밍 중이면 upstream을 유지 (재연결 가능)
     // sender가 끊겼음을 표시하여 stream-end broadcast에서 sender를 제외하지 않게 한다
@@ -350,6 +359,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
 
     // SSE 응답 공통 핸들러
     const onResponse = (proxyRes: http.IncomingMessage): void => {
+      clearKeepAlive();
       const contentType = proxyRes.headers['content-type'] || '';
       const isSSE = contentType.includes('text/event-stream');
 
@@ -357,7 +367,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
         const nonStreamId = crypto.randomBytes(8).toString('hex');
         const responseHeaders = { ...proxyRes.headers, 'x-sync-stream-id': nonStreamId };
 
-        if (!clientDisconnected) {
+        if (!clientDisconnected && !res.headersSent) {
           res.writeHead(proxyRes.statusCode!, responseHeaders);
         }
 
@@ -419,7 +429,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       const responseHeaders = { ...proxyRes.headers, 'x-sync-stream-id': streamId };
       streamBuffer.setResponseMeta(streamId, proxyRes.statusCode!, responseHeaders);
 
-      if (!clientDisconnected) {
+      if (!clientDisconnected && !res.headersSent) {
         res.writeHead(proxyRes.statusCode!, responseHeaders);
       }
 
@@ -491,6 +501,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
     };
 
     const onError = (err: Error): void => {
+      clearKeepAlive();
       pushLlmEvent({
         type: 'end',
         streamId: llmStreamId,
@@ -547,6 +558,20 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       upstreamReq.on('error', onError);
       upstreamReq.end(body);
     }
+
+    // Cloudflare 프록시 타임아웃(100s) 방지:
+    // upstream 응답 대기 중 30초마다 공백 바이트를 전송하여 연결을 유지한다.
+    // JSON 파서는 선행 공백을 무시하므로 응답 파싱에 영향 없음.
+    keepAliveTimer = setInterval(() => {
+      if (clientDisconnected || res.writableEnded) {
+        clearKeepAlive();
+        return;
+      }
+      if (!res.headersSent) {
+        res.writeHead(200);
+      }
+      res.write(' ');
+    }, 30_000);
   });
 }
 
