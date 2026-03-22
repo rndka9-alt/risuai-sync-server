@@ -412,6 +412,10 @@ export function getOutputPreview(id: string, maxLength: number): string {
   return streams.get(id)?.accumulatedText.slice(-maxLength) ?? '';
 }
 
+export function getAccumulatedText(id: string): string {
+  return streams.get(id)?.accumulatedText ?? '';
+}
+
 export function getRawResponseBody(id: string): Buffer | null {
   const stream = streams.get(id);
   if (!stream || stream.rawChunks.length === 0) return null;

@@ -27,6 +27,7 @@ import { verifyRisuAuth } from './utils/verifyRisuAuth';
 import { handleClientLog } from './utils/handleClientLog';
 import { hashRequestBody } from './utils/hashRequestBody';
 import { pushLlmEvent } from './utils/monitorPush';
+import { extractResponseMeta } from './llm-response-format/extractResponseMeta';
 
 function getUsePlainFetchFromDataCache(): boolean | null {
   const rootData = cache.dataCache.get('root');
@@ -341,7 +342,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
         responseType: 'cache',
         duration: Date.now() - llmStartTime,
         textLength: streamBuffer.getTextLength(cached.id),
-        outputPreview: streamBuffer.getOutputPreview(cached.id, 500),
+        outputPreview: streamBuffer.getAccumulatedText(cached.id),
         status: cached.status === 'completed' ? 200 : 0,
       });
       return;
@@ -382,16 +383,19 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
           const resContentType = typeof proxyRes.headers['content-type'] === 'string'
             ? proxyRes.headers['content-type']
             : '';
+          const meta = extractResponseMeta(responseBody, resContentType);
           pushLlmEvent({
             type: 'end',
             streamId: llmStreamId,
             responseType: 'non-sse',
             duration: Date.now() - llmStartTime,
             textLength: extractedText.length,
-            outputPreview: extractedText.slice(-500),
+            outputPreview: extractedText,
             status: proxyRes.statusCode,
             responseContentType: resContentType,
             responseBody: responseBody.toString('base64'),
+            finishReason: meta.finishReason,
+            outputTokens: meta.outputTokens,
           });
 
           if (!clientDisconnected && !res.writableEnded) res.end();
@@ -427,16 +431,21 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       proxyRes.on('end', () => {
         logger.info('Stream ended', { streamId });
         const rawBody = streamBuffer.getRawResponseBody(streamId);
+        const sseMeta = rawBody
+          ? extractResponseMeta(rawBody, 'text/event-stream')
+          : { finishReason: '', outputTokens: 0 };
         pushLlmEvent({
           type: 'end',
           streamId: llmStreamId,
           responseType: 'sse',
           duration: Date.now() - llmStartTime,
           textLength: streamBuffer.getTextLength(streamId),
-          outputPreview: streamBuffer.getOutputPreview(streamId, 500),
+          outputPreview: streamBuffer.getAccumulatedText(streamId),
           status: proxyRes.statusCode,
           responseContentType: 'text/event-stream',
           ...(rawBody ? { responseBody: rawBody.toString('base64') } : {}),
+          finishReason: sseMeta.finishReason,
+          outputTokens: sseMeta.outputTokens,
         });
         if (activeStreamId === streamId) {
           sync.endStream(streamId);
@@ -452,17 +461,22 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
           logger.error('Stream error', { streamId, error: err.message });
         }
         const rawBodyOnErr = streamBuffer.getRawResponseBody(streamId);
+        const errMeta = rawBodyOnErr
+          ? extractResponseMeta(rawBodyOnErr, 'text/event-stream')
+          : { finishReason: '', outputTokens: 0 };
         pushLlmEvent({
           type: 'end',
           streamId: llmStreamId,
           responseType: 'sse',
           duration: Date.now() - llmStartTime,
           textLength: streamBuffer.getTextLength(streamId),
-          outputPreview: streamBuffer.getOutputPreview(streamId, 500),
+          outputPreview: streamBuffer.getAccumulatedText(streamId),
           status: 0,
           error: err.message,
           responseContentType: 'text/event-stream',
           ...(rawBodyOnErr ? { responseBody: rawBodyOnErr.toString('base64') } : {}),
+          finishReason: errMeta.finishReason,
+          outputTokens: errMeta.outputTokens,
         });
         if (activeStreamId === streamId) {
           sync.endStream(streamId);
