@@ -24,7 +24,7 @@ export function pushLlmEvent(event: Record<string, unknown>): void {
         'content-type': 'application/json',
         'content-length': String(Buffer.byteLength(body)),
       },
-      timeout: 3000,
+      timeout: 30_000,
     },
     (res) => {
       res.resume();
