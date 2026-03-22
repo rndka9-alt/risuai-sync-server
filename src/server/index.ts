@@ -708,6 +708,18 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  const internalAbortMatch = req.url?.match(/^\/_internal\/stream\/([^/]+)\/abort$/);
+  if (req.method === 'POST' && internalAbortMatch) {
+    const streamId = internalAbortMatch[1];
+    if (streamBuffer.abort(streamId)) {
+      sync.endStream(streamId);
+      sendJson(res, 200, { success: true });
+    } else {
+      sendJson(res, 404, { error: 'stream not found or already finished' });
+    }
+    return;
+  }
+
   // --- /sync/* 경로 ---
   if (req.url!.startsWith('/sync/')) {
     const url = new URL(req.url!, `http://${req.headers.host}`);
