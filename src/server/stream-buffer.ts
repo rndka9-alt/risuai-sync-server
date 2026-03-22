@@ -412,6 +412,12 @@ export function getOutputPreview(id: string, maxLength: number): string {
   return streams.get(id)?.accumulatedText.slice(-maxLength) ?? '';
 }
 
+export function getRawResponseBody(id: string): Buffer | null {
+  const stream = streams.get(id);
+  if (!stream || stream.rawChunks.length === 0) return null;
+  return Buffer.concat(stream.rawChunks);
+}
+
 /** 보관소: ACK 수신 시 버퍼 삭제 */
 export function acknowledge(id: string): boolean {
   return streams.delete(id);

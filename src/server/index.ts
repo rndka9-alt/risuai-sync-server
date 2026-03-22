@@ -382,10 +382,6 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
           const resContentType = typeof proxyRes.headers['content-type'] === 'string'
             ? proxyRes.headers['content-type']
             : '';
-          const isBinaryResponse = resContentType.startsWith('image/') ||
-            resContentType.includes('zip') ||
-            resContentType.includes('octet-stream');
-
           pushLlmEvent({
             type: 'end',
             streamId: llmStreamId,
@@ -395,9 +391,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
             outputPreview: extractedText.slice(-500),
             status: proxyRes.statusCode,
             responseContentType: resContentType,
-            ...(isBinaryResponse ? {
-              responseBody: responseBody.toString('base64'),
-            } : {}),
+            responseBody: responseBody.toString('base64'),
           });
 
           if (!clientDisconnected && !res.writableEnded) res.end();
@@ -432,6 +426,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
 
       proxyRes.on('end', () => {
         logger.info('Stream ended', { streamId });
+        const rawBody = streamBuffer.getRawResponseBody(streamId);
         pushLlmEvent({
           type: 'end',
           streamId: llmStreamId,
@@ -440,6 +435,8 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
           textLength: streamBuffer.getTextLength(streamId),
           outputPreview: streamBuffer.getOutputPreview(streamId, 500),
           status: proxyRes.statusCode,
+          responseContentType: 'text/event-stream',
+          ...(rawBody ? { responseBody: rawBody.toString('base64') } : {}),
         });
         if (activeStreamId === streamId) {
           sync.endStream(streamId);
@@ -454,6 +451,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
         if (!clientDisconnected) {
           logger.error('Stream error', { streamId, error: err.message });
         }
+        const rawBodyOnErr = streamBuffer.getRawResponseBody(streamId);
         pushLlmEvent({
           type: 'end',
           streamId: llmStreamId,
@@ -463,6 +461,8 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
           outputPreview: streamBuffer.getOutputPreview(streamId, 500),
           status: 0,
           error: err.message,
+          responseContentType: 'text/event-stream',
+          ...(rawBodyOnErr ? { responseBody: rawBodyOnErr.toString('base64') } : {}),
         });
         if (activeStreamId === streamId) {
           sync.endStream(streamId);
