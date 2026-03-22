@@ -256,6 +256,9 @@ function isProxy2Post(req: http.IncomingMessage): boolean {
   return req.method === 'POST' && (req.url === '/proxy2' || req.url?.startsWith('/proxy2?') === true);
 }
 
+/** streamId → upstream 요청. abort 시 destroy용. */
+const pendingUpstreams = new Map<string, http.ClientRequest>();
+
 function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void {
   const rawClientId = req.headers[config.CLIENT_ID_HEADER];
   const senderClientId = typeof rawClientId === 'string' ? rawClientId : 'unknown';
@@ -315,11 +318,11 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
 
     const llmTargetUrl = decoded ? decoded.targetUrl.href : '';
     const llmStartTime = Date.now();
-    const llmStreamId = crypto.randomBytes(8).toString('hex');
+    const streamId = crypto.randomBytes(8).toString('hex');
 
     pushLlmEvent({
       type: 'start',
-      streamId: llmStreamId,
+      streamId: streamId,
       sender: senderClientId,
       targetCharId,
       targetUrl: llmTargetUrl,
@@ -347,7 +350,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       }
       pushLlmEvent({
         type: 'end',
-        streamId: llmStreamId,
+        streamId: streamId,
         responseType: 'cache',
         duration: Date.now() - llmStartTime,
         textLength: streamBuffer.getTextLength(cached.id),
@@ -360,6 +363,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
     // SSE 응답 공통 핸들러
     const onResponse = (proxyRes: http.IncomingMessage): void => {
       clearKeepAlive();
+      pendingUpstreams.delete(streamId);
       const contentType = proxyRes.headers['content-type'] || '';
       const isSSE = contentType.includes('text/event-stream');
 
@@ -396,7 +400,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
           const meta = extractResponseMeta(responseBody, resContentType);
           pushLlmEvent({
             type: 'end',
-            streamId: llmStreamId,
+            streamId: streamId,
             responseType: 'non-sse',
             duration: Date.now() - llmStartTime,
             textLength: extractedText.length,
@@ -415,7 +419,6 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       }
 
       // SSE streaming response — buffer + tee
-      const streamId = crypto.randomBytes(8).toString('hex');
       activeStreamId = streamId;
       logger.info('Stream started', { streamId, sender: senderClientId, targetCharId: targetCharId || 'unknown' });
 
@@ -447,7 +450,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
           : { finishReason: '', outputTokens: 0 };
         pushLlmEvent({
           type: 'end',
-          streamId: llmStreamId,
+          streamId: streamId,
           responseType: 'sse',
           duration: Date.now() - llmStartTime,
           textLength: streamBuffer.getTextLength(streamId),
@@ -478,7 +481,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
           : { finishReason: '', outputTokens: 0 };
         pushLlmEvent({
           type: 'end',
-          streamId: llmStreamId,
+          streamId: streamId,
           responseType: 'sse',
           duration: Date.now() - llmStartTime,
           textLength: streamBuffer.getTextLength(streamId),
@@ -502,9 +505,10 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
 
     const onError = (err: Error): void => {
       clearKeepAlive();
+      pendingUpstreams.delete(streamId);
       pushLlmEvent({
         type: 'end',
-        streamId: llmStreamId,
+        streamId: streamId,
         responseType: 'error',
         duration: Date.now() - llmStartTime,
         textLength: 0,
@@ -534,6 +538,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
         if (remoteAddr) decoded.headers['x-forwarded-for'] = remoteAddr;
       }
       upstreamReq = forwardToLlm(decoded, body, onResponse, onError);
+      pendingUpstreams.set(streamId, upstreamReq);
     } else {
       // risu-url 없음 → upstream fallback
       const headers: Record<string, string | string[] | undefined> = {
@@ -557,6 +562,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       );
       upstreamReq.on('error', onError);
       upstreamReq.end(body);
+      pendingUpstreams.set(streamId, upstreamReq);
     }
 
     // Cloudflare 프록시 타임아웃(100s) 방지:
@@ -710,9 +716,14 @@ const server = http.createServer((req, res) => {
 
   const internalAbortMatch = req.url?.match(/^\/_internal\/stream\/([^/]+)\/abort$/);
   if (req.method === 'POST' && internalAbortMatch) {
-    const streamId = internalAbortMatch[1];
-    if (streamBuffer.abort(streamId)) {
-      sync.endStream(streamId);
+    const abortId = internalAbortMatch[1];
+    const pending = pendingUpstreams.get(abortId);
+    if (pending) {
+      pendingUpstreams.delete(abortId);
+      if (!pending.destroyed) pending.destroy();
+      sendJson(res, 200, { success: true });
+    } else if (streamBuffer.abort(abortId)) {
+      sync.endStream(abortId);
       sendJson(res, 200, { success: true });
     } else {
       sendJson(res, 404, { error: 'stream not found or already finished' });
