@@ -259,6 +259,9 @@ function isProxy2Post(req: http.IncomingMessage): boolean {
 /** streamId → upstream 요청. abort 시 destroy용. */
 const pendingUpstreams = new Map<string, http.ClientRequest>();
 
+/** abort된 streamId 추적. onError에서 502 대신 cancel 응답을 보내기 위함. */
+const abortedStreams = new Set<string>();
+
 function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void {
   const rawClientId = req.headers[config.CLIENT_ID_HEADER];
   const senderClientId = typeof rawClientId === 'string' ? rawClientId : 'unknown';
@@ -506,17 +509,30 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
     const onError = (err: Error): void => {
       clearKeepAlive();
       pendingUpstreams.delete(streamId);
+      const wasAborted = abortedStreams.delete(streamId);
       pushLlmEvent({
         type: 'end',
         streamId: streamId,
-        responseType: 'error',
+        responseType: wasAborted ? 'aborted' : 'error',
         duration: Date.now() - llmStartTime,
         textLength: 0,
         outputPreview: '',
-        status: 502,
-        error: err.message,
+        status: wasAborted ? 0 : 502,
+        error: wasAborted ? '' : err.message,
       });
       if (clientDisconnected) return;
+      if (wasAborted) {
+        const cancelText = '*유저에 의해 요청이 취소되었습니다*';
+        const isAnthropic = llmTargetUrl.includes('anthropic');
+        const body = isAnthropic
+          ? { content: [{ type: 'text', text: cancelText }], stop_reason: 'end_turn', role: 'assistant' }
+          : { choices: [{ message: { content: cancelText, role: 'assistant' }, finish_reason: 'stop', index: 0 }] };
+        if (!res.headersSent) {
+          res.writeHead(200, { 'content-type': 'application/json' });
+        }
+        res.end(JSON.stringify(body));
+        return;
+      }
       logger.error('proxy2 error', { error: err.message });
       if (!res.headersSent) {
         res.writeHead(502, { 'content-type': 'text/plain' });
@@ -719,8 +735,9 @@ const server = http.createServer((req, res) => {
     const abortId = internalAbortMatch[1];
     const pending = pendingUpstreams.get(abortId);
     if (pending) {
+      abortedStreams.add(abortId);
       pendingUpstreams.delete(abortId);
-      if (!pending.destroyed) pending.destroy();
+      if (!pending.destroyed) pending.destroy(new Error('cancelled'));
       sendJson(res, 200, { success: true });
     } else if (streamBuffer.abort(abortId)) {
       sync.endStream(abortId);

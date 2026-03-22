@@ -86,6 +86,7 @@ export interface PlainFetchWarningMessage {
   timestamp: number;
 }
 
+
 /** WebSocket 메시지: 클라이언트 → 서버 */
 export type ClientMessage =
   | AuthMessage
