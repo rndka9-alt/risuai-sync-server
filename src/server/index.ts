@@ -335,6 +335,15 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
           res.end('Stream subscribe failed');
         }
       }
+      pushLlmEvent({
+        type: 'end',
+        streamId: llmStreamId,
+        responseType: 'cache',
+        duration: Date.now() - llmStartTime,
+        textLength: streamBuffer.getTextLength(cached.id),
+        outputPreview: streamBuffer.getOutputPreview(cached.id, 500),
+        status: cached.status === 'completed' ? 200 : 0,
+      });
       return;
     }
 
