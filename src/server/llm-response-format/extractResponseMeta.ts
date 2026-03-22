@@ -3,9 +3,10 @@ import { isRecord } from './util';
 export interface ResponseMeta {
   finishReason: string;
   outputTokens: number;
+  reasoningTokens: number;
 }
 
-const EMPTY: ResponseMeta = { finishReason: '', outputTokens: 0 };
+const EMPTY: ResponseMeta = { finishReason: '', outputTokens: 0, reasoningTokens: 0 };
 
 /**
  * Non-SSE JSON 응답 또는 SSE raw body에서 finish_reason과 output_tokens를 추출한다.
@@ -26,9 +27,19 @@ export function extractResponseMeta(body: Buffer, contentType: string): Response
   }
 }
 
+function extractOpenAIUsage(usage: Record<string, unknown>): { outputTokens: number; reasoningTokens: number } {
+  const outputTokens = Number(usage.completion_tokens) || 0;
+  let reasoningTokens = 0;
+  if (isRecord(usage.completion_tokens_details)) {
+    reasoningTokens = Number(usage.completion_tokens_details.reasoning_tokens) || 0;
+  }
+  return { outputTokens, reasoningTokens };
+}
+
 function extractFromJson(json: Record<string, unknown>): ResponseMeta {
   let finishReason = '';
   let outputTokens = 0;
+  let reasoningTokens = 0;
 
   // OpenAI compatible: choices[0].finish_reason, usage.completion_tokens
   if (Array.isArray(json.choices)) {
@@ -40,20 +51,20 @@ function extractFromJson(json: Record<string, unknown>): ResponseMeta {
       }
     }
     if (isRecord(json.usage)) {
-      const tokens = Number(json.usage.completion_tokens);
-      if (tokens > 0) outputTokens = tokens;
+      const usage = extractOpenAIUsage(json.usage);
+      outputTokens = usage.outputTokens;
+      reasoningTokens = usage.reasoningTokens;
     }
-    if (finishReason || outputTokens) return { finishReason, outputTokens };
+    if (finishReason || outputTokens) return { finishReason, outputTokens, reasoningTokens };
   }
 
   // Anthropic: stop_reason, usage.output_tokens
   if (typeof json.stop_reason === 'string') {
     finishReason = json.stop_reason;
     if (isRecord(json.usage)) {
-      const tokens = Number(json.usage.output_tokens);
-      if (tokens > 0) outputTokens = tokens;
+      outputTokens = Number(json.usage.output_tokens) || 0;
     }
-    return { finishReason, outputTokens };
+    return { finishReason, outputTokens, reasoningTokens };
   }
 
   // Google: candidates[0].finishReason, usageMetadata.candidatesTokenCount
@@ -66,20 +77,20 @@ function extractFromJson(json: Record<string, unknown>): ResponseMeta {
       }
     }
     if (isRecord(json.usageMetadata)) {
-      const tokens = Number(json.usageMetadata.candidatesTokenCount);
-      if (tokens > 0) outputTokens = tokens;
+      outputTokens = Number(json.usageMetadata.candidatesTokenCount) || 0;
+      reasoningTokens = Number(json.usageMetadata.thoughtsTokenCount) || 0;
     }
-    if (finishReason || outputTokens) return { finishReason, outputTokens };
+    if (finishReason || outputTokens) return { finishReason, outputTokens, reasoningTokens };
   }
 
   // OpenAI Response API: status, usage.output_tokens
   if (typeof json.status === 'string' && Array.isArray(json.output)) {
     finishReason = json.status;
     if (isRecord(json.usage)) {
-      const tokens = Number(json.usage.output_tokens);
-      if (tokens > 0) outputTokens = tokens;
+      outputTokens = Number(json.usage.output_tokens) || 0;
+      reasoningTokens = Number(json.usage.reasoning_tokens) || 0;
     }
-    return { finishReason, outputTokens };
+    return { finishReason, outputTokens, reasoningTokens };
   }
 
   return EMPTY;
@@ -92,6 +103,7 @@ function extractFromJson(json: Record<string, unknown>): ResponseMeta {
 function extractFromSSE(raw: string): ResponseMeta {
   let finishReason = '';
   let outputTokens = 0;
+  let reasoningTokens = 0;
 
   // 뒤에서부터 스캔 — 메타데이터는 마지막 이벤트들에 있음
   const lines = raw.split('\n');
@@ -120,13 +132,14 @@ function extractFromSSE(raw: string): ResponseMeta {
 
       if (result.finishReason && !finishReason) finishReason = result.finishReason;
       if (result.outputTokens > 0 && outputTokens === 0) outputTokens = result.outputTokens;
+      if (result.reasoningTokens > 0 && reasoningTokens === 0) reasoningTokens = result.reasoningTokens;
 
-      // 둘 다 찾았으면 종료
-      if (finishReason && outputTokens > 0) break;
+      // 셋 다 찾았으면 종료
+      if (finishReason && outputTokens > 0 && reasoningTokens > 0) break;
     } catch {
       continue;
     }
   }
 
-  return { finishReason, outputTokens };
+  return { finishReason, outputTokens, reasoningTokens };
 }

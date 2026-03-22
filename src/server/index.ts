@@ -396,6 +396,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
             responseBody: responseBody.toString('base64'),
             finishReason: meta.finishReason,
             outputTokens: meta.outputTokens,
+            reasoningTokens: meta.reasoningTokens,
           });
 
           if (!clientDisconnected && !res.writableEnded) res.end();
@@ -446,6 +447,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
           ...(rawBody ? { responseBody: rawBody.toString('base64') } : {}),
           finishReason: sseMeta.finishReason,
           outputTokens: sseMeta.outputTokens,
+          reasoningTokens: sseMeta.reasoningTokens,
         });
         if (activeStreamId === streamId) {
           sync.endStream(streamId);
@@ -477,6 +479,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
           ...(rawBodyOnErr ? { responseBody: rawBodyOnErr.toString('base64') } : {}),
           finishReason: errMeta.finishReason,
           outputTokens: errMeta.outputTokens,
+          reasoningTokens: errMeta.reasoningTokens,
         });
         if (activeStreamId === streamId) {
           sync.endStream(streamId);
