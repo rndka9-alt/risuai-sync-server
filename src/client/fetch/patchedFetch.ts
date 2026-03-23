@@ -1,5 +1,6 @@
-import { CLIENT_ID, CLIENT_ID_HEADER, PROXY2_TARGET_HEADER, RISU_AUTH_HEADER } from '../config';
+import { CLIENT_ID, CLIENT_ID_HEADER, FILE_PATH_HEADER, PROXY2_TARGET_HEADER, RISU_AUTH_HEADER } from '../config';
 import { extractRemoteCharId, isUnchangedRemoteBlock, ensureBufferedBody } from '../dedup';
+import { hexDecode } from '../dedup/utils/hexDecode';
 import { capture } from '../auth';
 import { extractHeader } from '../utils/extractHeader';
 import { setHeader } from './utils/setHeader';
@@ -45,6 +46,21 @@ const patchedFetch: typeof fetch = function (input, init) {
   // POST /api/write 시 클라이언트 ID 헤더 추가 + 재시도 래핑
   if (init && init.method === 'POST' && input === '/api/write' && init.headers) {
     setHeader(init.headers, CLIENT_ID_HEADER, CLIENT_ID);
+
+    // .meta.meta 체인 무한 성장 방지: 클라이언트에서 write 자체를 차단
+    const filePath = extractHeader(init.headers, FILE_PATH_HEADER);
+    if (filePath) {
+      try {
+        if (hexDecode(filePath).includes('.meta.meta')) {
+          return Promise.resolve(new Response(JSON.stringify({ success: true }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }));
+        }
+      } catch {
+        // hex 디코딩 실패 시 정상 전달
+      }
+    }
 
     // Remote block write dedup: 해시가 동일하면 요청 자체를 보내지 않음
     const charId = extractRemoteCharId(init.headers);
