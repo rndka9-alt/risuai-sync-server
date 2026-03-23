@@ -9,6 +9,12 @@ import { fetchWriteWithRetry } from './utils/fetchWriteWithRetry';
 import { extractSyncMarker } from './utils/extractSyncMarker';
 import { buildProxy2Request } from './utils/redirectToProxy2';
 import { showSyncFallbackNotice } from '../notification/showSyncFallbackNotice';
+import { computeDelta, warmCache } from '../deltaDb';
+
+/** hex-encoded "database/database.bin" */
+const DB_BIN_HEX = Array.from(new TextEncoder().encode('database/database.bin'))
+  .map((b) => b.toString(16).padStart(2, '0'))
+  .join('');
 
 /** fetch monkey-patch */
 const originalFetch = window.fetch;
@@ -47,8 +53,9 @@ const patchedFetch: typeof fetch = function (input, init) {
   if (init && init.method === 'POST' && input === '/api/write' && init.headers) {
     setHeader(init.headers, CLIENT_ID_HEADER, CLIENT_ID);
 
-    // .meta.meta 체인 무한 성장 방지: 클라이언트에서 write 자체를 차단
     const filePath = extractHeader(init.headers, FILE_PATH_HEADER);
+
+    // .meta.meta 체인 무한 성장 방지: 클라이언트에서 write 자체를 차단
     if (filePath) {
       try {
         if (hexDecode(filePath).includes('.meta.meta')) {
@@ -60,6 +67,38 @@ const patchedFetch: typeof fetch = function (input, init) {
       } catch {
         // hex 디코딩 실패 시 정상 전달
       }
+    }
+
+    // database.bin → delta 시도, 실패 시 전체 전송 fallback
+    if (filePath === DB_BIN_HEX) {
+      return (async () => {
+        const buffered = await ensureBufferedBody(init);
+        const body = buffered.body;
+        if (body instanceof Uint8Array) {
+          const delta = computeDelta(body);
+          if (delta) {
+            try {
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 15000);
+              const resp = await originalFetch.call(window, '/sync/delta-dbwrite', {
+                method: 'POST',
+                body: JSON.stringify(delta),
+                signal: controller.signal,
+                headers: {
+                  'content-type': 'application/json',
+                  [RISU_AUTH_HEADER]: extractHeader(buffered.headers, RISU_AUTH_HEADER) ?? '',
+                  [CLIENT_ID_HEADER]: CLIENT_ID,
+                },
+              });
+              clearTimeout(timeout);
+              if (resp.ok) return resp;
+            } catch {
+              // delta 실패 → 전체 전송 fallback
+            }
+          }
+        }
+        return fetchWriteWithRetry(input, buffered);
+      })();
     }
 
     // Remote block write dedup: 해시가 동일하면 요청 자체를 보내지 않음
@@ -94,6 +133,22 @@ const patchedFetch: typeof fetch = function (input, init) {
     setHeader(init.headers, CLIENT_ID_HEADER, CLIENT_ID);
     if (target) {
       setHeader(init.headers, PROXY2_TARGET_HEADER, target);
+    }
+  }
+
+  // GET /api/read database.bin → delta 캐시 warm
+  if (input === '/api/read' && (!init?.method || init.method === 'GET')) {
+    const fp = extractHeader(init?.headers, FILE_PATH_HEADER);
+    if (fp === DB_BIN_HEX) {
+      return originalFetch.call(window, input, init!).then((resp: Response) => {
+        if (resp.ok) {
+          const cloned = resp.clone();
+          cloned.arrayBuffer().then((buf) => {
+            warmCache(new Uint8Array(buf));
+          }).catch(() => {});
+        }
+        return resp;
+      });
     }
   }
 

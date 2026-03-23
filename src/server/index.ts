@@ -21,6 +21,7 @@ import { SYNC_MARKER_KEY } from '../shared/syncMarker';
 import { sendJson } from './utils/sendJson';
 import { notifyWriteFailed } from './utils/notifyWriteFailed';
 import { sendUpstreamWithRetry } from './utils/sendUpstreamWithRetry';
+import { handleDeltaDbWrite, setCachedDbBinary } from './utils/deltaDbWrite';
 import { proxyRequest } from './utils/proxyRequest';
 import { broadcastPlainFetchWarning } from './utils/broadcast';
 import { verifyRisuAuth } from './utils/verifyRisuAuth';
@@ -183,6 +184,7 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
         proxyRes.pipe(res);
 
         if (proxyRes.statusCode! >= 200 && proxyRes.statusCode! < 300) {
+          setCachedDbBinary(buffer);
           setImmediate(() => sync.enqueueDbWrite(seq, buffer, senderClientId));
         } else {
           sync.skipDbWrite(seq);
@@ -704,6 +706,8 @@ const server = http.createServer((req, res) => {
     }
   }
 
+  logger.debug('Request', { rid, method: req.method, url: req.url, clientId: req.headers[config.CLIENT_ID_HEADER] });
+
   res.on('finish', () => {
     const duration = (performance.now() - reqStart).toFixed(0);
     const logFields: Record<string, string | undefined> = { rid, method: req.method, url: req.url, status: String(res.statusCode), ms: duration };
@@ -778,6 +782,32 @@ const server = http.createServer((req, res) => {
         cachedBlocks: cache.hashCache.size,
       };
       sendJson(res, 200, health);
+      return;
+    }
+
+    // /sync/delta-dbwrite — auth 포함, auth 블록 밖에서 처리
+    if (req.method === 'POST' && url.pathname === '/sync/delta-dbwrite') {
+      const httpClientId = typeof req.headers[config.CLIENT_ID_HEADER] === 'string'
+        ? req.headers[config.CLIENT_ID_HEADER]
+        : null;
+      if (isTrustedClient(httpClientId)) {
+        handleDeltaDbWrite(req, res, sync.processDbWrite, notifyWriteFailed);
+        return;
+      }
+      const risuAuth = req.headers[config.RISU_AUTH_HEADER];
+      if (typeof risuAuth !== 'string') {
+        sendJson(res, 401, { error: 'unauthorized' });
+        return;
+      }
+      verifyRisuAuth(risuAuth).then((valid) => {
+        if (!valid) {
+          sendJson(res, 401, { error: 'unauthorized' });
+          return;
+        }
+        handleDeltaDbWrite(req, res, sync.processDbWrite, notifyWriteFailed);
+      }).catch(() => {
+        if (!res.headersSent) sendJson(res, 502, { error: 'auth verification failed' });
+      });
       return;
     }
 
@@ -988,6 +1018,9 @@ const server = http.createServer((req, res) => {
           let responseBuf = originalBuf;
 
           if (proxyRes.statusCode! >= 200 && proxyRes.statusCode! < 300) {
+            // delta-dbwrite 캐시: 클라이언트 최초 read 시 채움
+            setCachedDbBinary(originalBuf);
+
             try {
               const parsed = parseRisuSaveBlocks(originalBuf);
               if (parsed) {
