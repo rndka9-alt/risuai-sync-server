@@ -22,6 +22,7 @@ import { sendJson } from './utils/sendJson';
 import { notifyWriteFailed } from './utils/notifyWriteFailed';
 import { sendUpstreamWithRetry } from './utils/sendUpstreamWithRetry';
 import { handleDeltaDbWrite, setCachedDbBinary } from './utils/deltaDbWrite';
+import { initAuth, issueInternalToken, isAuthReady } from './utils/risuAuth';
 import { proxyRequest } from './utils/proxyRequest';
 import { broadcastPlainFetchWarning } from './utils/broadcast';
 import { verifyRisuAuth } from './utils/verifyRisuAuth';
@@ -1104,4 +1105,35 @@ server.listen(config.PORT, () => {
   logger.info(`Max cache size: ${(config.MAX_CACHE_SIZE / 1048576).toFixed(0)}MB`);
   logger.info(`Max log entries: ${config.MAX_LOG_ENTRIES}`);
   logger.info(`Log level: ${config.LOG_LEVEL}`);
+
+  // Self-auth → proactive database.bin fetch (non-blocking)
+  (async () => {
+    await initAuth().catch((e) => logger.warn('Self-auth error', { error: String(e) }));
+    if (!isAuthReady()) return;
+
+    const token = await issueInternalToken();
+    if (!token) return;
+
+    try {
+      const hexPath = Buffer.from(config.DB_PATH, 'utf-8').toString('hex');
+      const resp = await fetch(`${config.UPSTREAM.protocol}//${config.UPSTREAM.host}/api/read`, {
+        method: 'GET',
+        headers: {
+          [config.FILE_PATH_HEADER]: hexPath,
+          [config.RISU_AUTH_HEADER]: token,
+        },
+      });
+
+      if (resp.ok) {
+        const body = Buffer.from(await resp.arrayBuffer());
+        if (body.length > 0) {
+          setCachedDbBinary(body);
+          sync.processDbWrite(body, null);
+          logger.info('Proactive database.bin fetch completed', { bodyKB: String((body.length / 1024).toFixed(0)) });
+        }
+      }
+    } catch (e) {
+      logger.warn('Proactive database.bin fetch failed', { error: String(e) });
+    }
+  })();
 });
