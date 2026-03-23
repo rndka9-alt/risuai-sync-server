@@ -358,7 +358,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
         duration: Date.now() - llmStartTime,
         textLength: streamBuffer.getTextLength(cached.id),
         outputPreview: streamBuffer.getAccumulatedText(cached.id),
-        status: cached.status === 'completed' ? 200 : 0,
+        status: cached.httpStatus,
       });
       return;
     }

@@ -463,10 +463,13 @@ export function setResponseMeta(id: string, status: number, headers: http.Incomi
 }
 
 /** 요청 해시가 일치하는 스트림 찾기 (completed 또는 streaming) */
-export function findByHash(hash: string): { id: string; status: 'completed' | 'streaming' } | null {
+export function findByHash(hash: string): { id: string; status: 'completed' | 'streaming'; httpStatus: number } | null {
   for (const stream of streams.values()) {
     if (stream.requestHash === hash && (stream.status === 'completed' || stream.status === 'streaming')) {
-      return { id: stream.id, status: stream.status };
+      const httpStatus = stream.rawResponse?.status
+        ?? stream.responseMeta?.status
+        ?? 0;
+      return { id: stream.id, status: stream.status, httpStatus };
     }
   }
   return null;
