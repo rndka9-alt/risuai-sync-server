@@ -9,7 +9,7 @@ import { fetchWriteWithRetry } from './utils/fetchWriteWithRetry';
 import { extractSyncMarker } from './utils/extractSyncMarker';
 import { buildProxy2Request } from './utils/redirectToProxy2';
 import { showSyncFallbackNotice } from '../notification/showSyncFallbackNotice';
-import { computeDelta, computeRemoteDelta, warmCache } from '../deltaDb';
+import { computeDelta, computeRemoteDelta, warmCache, warmRemoteCache } from '../deltaDb';
 
 /** hex-encoded "database/database.bin" */
 const DB_BIN_HEX = Array.from(new TextEncoder().encode('database/database.bin'))
@@ -150,7 +150,7 @@ const patchedFetch: typeof fetch = function (input, init) {
     }
   }
 
-  // GET /api/read database.bin → delta 캐시 warm
+  // GET /api/read → delta 캐시 warm
   if (input === '/api/read' && (!init?.method || init.method === 'GET')) {
     const fp = extractHeader(init?.headers, FILE_PATH_HEADER);
     if (fp === DB_BIN_HEX) {
@@ -159,6 +159,19 @@ const patchedFetch: typeof fetch = function (input, init) {
           const cloned = resp.clone();
           cloned.arrayBuffer().then((buf) => {
             warmCache(new Uint8Array(buf));
+          }).catch(() => {});
+        }
+        return resp;
+      });
+    }
+    // remote block read → 캐시 warm (첫 write부터 delta 가능)
+    const charId = fp ? extractRemoteCharId({ [FILE_PATH_HEADER]: fp }) : null;
+    if (charId) {
+      return originalFetch.call(window, input, init!).then((resp: Response) => {
+        if (resp.ok) {
+          const cloned = resp.clone();
+          cloned.arrayBuffer().then((buf) => {
+            warmRemoteCache(charId, new Uint8Array(buf));
           }).catch(() => {});
         }
         return resp;

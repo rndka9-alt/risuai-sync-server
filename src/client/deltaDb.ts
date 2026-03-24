@@ -213,6 +213,21 @@ const remoteBlockCache = new Map<string, unknown>();
 const BLOCK_TYPE_WITH_CHAT = 2;
 
 /**
+ * Remote block read 응답으로 캐시를 채움. 첫 write부터 delta 가능.
+ * 메모리 절약을 위해 활성 캐릭터 1개만 유지.
+ */
+export function warmRemoteCache(charId: string, body: Uint8Array): void {
+  try {
+    if (!remoteBlockCache.has(charId)) {
+      remoteBlockCache.clear();
+    }
+    remoteBlockCache.set(charId, JSON.parse(new TextDecoder().decode(body)));
+  } catch {
+    // 파싱 실패 시 무시
+  }
+}
+
+/**
  * Remote block body에서 변경분만 추출.
  * null: delta 불가 (캐시 없음, 파싱 실패, 변경 없음) → 전체 전송.
  */
