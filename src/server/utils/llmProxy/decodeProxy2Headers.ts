@@ -37,10 +37,14 @@ export function decodeProxy2Headers(req: http.IncomingMessage): DecodedProxy2 | 
     }
   }
 
-  const rawMethod = req.headers['risu-method'];
-  if (typeof rawMethod !== 'string' || rawMethod.length === 0) {
-    throw new Error('risu-method header is required');
+  const rawMethod = req.headers['x-proxy-method'];
+  const method = typeof rawMethod === 'string' && rawMethod.length > 0
+    ? rawMethod
+    : 'POST';
+
+  if (!rawMethod) {
+    logger.warn('x-proxy-method header missing, falling back to POST (RisuAI core client)');
   }
 
-  return { targetUrl, headers, method: rawMethod };
+  return { targetUrl, headers, method };
 }

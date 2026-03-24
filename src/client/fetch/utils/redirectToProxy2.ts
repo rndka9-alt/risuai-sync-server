@@ -30,7 +30,7 @@ export function buildProxy2Request(
   const headers: Record<string, string> = {
     'risu-url': encodeURIComponent(originalUrl),
     'risu-header': encodeURIComponent(JSON.stringify(originalHeaders)),
-    'risu-method': originalMethod,
+    'x-proxy-method': originalMethod,
     'Content-Type': originalHeaders['content-type'] || originalHeaders['Content-Type'] || 'application/json',
     [CLIENT_ID_HEADER]: CLIENT_ID,
   };

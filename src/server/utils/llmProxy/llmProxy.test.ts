@@ -102,17 +102,23 @@ describe('decodeProxy2Headers', () => {
     expect(decodeProxy2Headers(mockReq({ 'risu-url': 'not-a-url' }))).toBeNull();
   });
 
-  it('throws when risu-url is present but risu-method is missing', () => {
-    expect(() => decodeProxy2Headers(mockReq({
+  it('falls back to POST and logs warning when x-proxy-method is missing', async () => {
+    const logger = await import('../../logger');
+    const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent('https://api.example.com/v1'),
-    }))).toThrow('risu-method header is required');
+    }));
+    if (!result) { expect.unreachable('expected non-null'); return; }
+    expect(result.method).toBe('POST');
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('x-proxy-method header missing'),
+    );
   });
 
   it('decodes risu-url to URL', () => {
     const url = 'https://api.openai.com/v1/chat/completions';
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent(url),
-      'risu-method': 'POST',
+      'x-proxy-method': 'POST',
     }));
     if (!result) { expect.unreachable('expected non-null'); return; }
     expect(result.targetUrl.href).toBe(url);
@@ -123,7 +129,7 @@ describe('decodeProxy2Headers', () => {
     const url = 'https://api.anthropic.com/v1/messages?beta=true';
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent(url),
-      'risu-method': 'POST',
+      'x-proxy-method': 'POST',
     }));
     if (!result) { expect.unreachable('expected non-null'); return; }
     expect(result.targetUrl.pathname).toBe('/v1/messages');
@@ -133,7 +139,7 @@ describe('decodeProxy2Headers', () => {
   it('returns empty headers when risu-header is absent', () => {
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent('https://api.example.com/v1'),
-      'risu-method': 'GET',
+      'x-proxy-method': 'GET',
     }));
     if (!result) { expect.unreachable('expected non-null'); return; }
     expect(Object.keys(result.headers)).toHaveLength(0);
@@ -147,7 +153,7 @@ describe('decodeProxy2Headers', () => {
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent('https://api.example.com/v1'),
       'risu-header': encodeURIComponent(JSON.stringify(headers)),
-      'risu-method': 'POST',
+      'x-proxy-method': 'POST',
     }));
     if (!result) { expect.unreachable('expected non-null'); return; }
     expect(result.headers['content-type']).toBe('application/json');
@@ -164,7 +170,7 @@ describe('decodeProxy2Headers', () => {
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent('https://api.example.com/v1'),
       'risu-header': encodeURIComponent(JSON.stringify(headers)),
-      'risu-method': 'POST',
+      'x-proxy-method': 'POST',
     }));
     if (!result) { expect.unreachable('expected non-null'); return; }
     expect(result.headers['content-type']).toBe('application/json');
@@ -177,7 +183,7 @@ describe('decodeProxy2Headers', () => {
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent('https://api.example.com/v1'),
       'risu-header': 'not-valid-json',
-      'risu-method': 'POST',
+      'x-proxy-method': 'POST',
     }));
     expect(result).toBeNull();
   });
@@ -186,7 +192,7 @@ describe('decodeProxy2Headers', () => {
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent('https://api.example.com/v1'),
       'risu-header': encodeURIComponent(JSON.stringify(['a', 'b'])),
-      'risu-method': 'POST',
+      'x-proxy-method': 'POST',
     }));
     if (!result) { expect.unreachable('expected non-null'); return; }
     expect(Object.keys(result.headers)).toHaveLength(0);
@@ -196,16 +202,16 @@ describe('decodeProxy2Headers', () => {
     const url = 'https://api.example.com/v1?q=hello%20world';
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent(url),
-      'risu-method': 'GET',
+      'x-proxy-method': 'GET',
     }));
     if (!result) { expect.unreachable('expected non-null'); return; }
     expect(result.targetUrl.search).toBe('?q=hello%20world');
   });
 
-  it('decodes risu-method header', () => {
+  it('decodes x-proxy-method header', () => {
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent('https://api.example.com/v1'),
-      'risu-method': 'GET',
+      'x-proxy-method': 'GET',
     }));
     if (!result) { expect.unreachable('expected non-null'); return; }
     expect(result.method).toBe('GET');
