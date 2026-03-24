@@ -1,9 +1,9 @@
 /**
- * database.bin delta 경량화 — decoded object 기반.
+ * Delta 경량화 — decoded object 기반.
  *
  * 인메모리에 블록별 파싱된 객체를 유지.
  * write 시 이전 객체와 재귀 deep compare → 변경된 부분만 추출하여 전송.
- * 모든 블록에 동일한 diff 로직 적용 (root 특별 취급 없음).
+ * database.bin 블록과 remote 블록(캐릭터) 모두 동일한 diff 로직 적용.
  */
 
 const MAGIC = 'RISUSAVE\0';
@@ -202,4 +202,35 @@ export function computeDelta(body: Uint8Array): DeltaPayload | null {
   if (!hasChanges) return null;
 
   return { blocks: deltas };
+}
+
+// --- Remote block (캐릭터) delta ---
+
+/** charId → 파싱된 캐릭터 객체 */
+const remoteBlockCache = new Map<string, unknown>();
+
+/** WITH_CHAT block type (shared/blockTypes.ts 와 동일) */
+const BLOCK_TYPE_WITH_CHAT = 2;
+
+/**
+ * Remote block body에서 변경분만 추출.
+ * null: delta 불가 (캐시 없음, 파싱 실패, 변경 없음) → 전체 전송.
+ */
+export function computeRemoteDelta(charId: string, body: Uint8Array): DeltaPayload | null {
+  let obj: unknown;
+  try {
+    obj = JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    return null;
+  }
+
+  const cached = remoteBlockCache.get(charId);
+  remoteBlockCache.set(charId, obj);
+
+  if (cached === undefined) return null;
+
+  const d = diff(cached, obj);
+  if (d === undefined) return null;
+
+  return { blocks: { [charId]: { type: BLOCK_TYPE_WITH_CHAT, patch: d } } };
 }

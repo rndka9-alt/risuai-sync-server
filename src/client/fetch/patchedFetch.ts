@@ -9,7 +9,7 @@ import { fetchWriteWithRetry } from './utils/fetchWriteWithRetry';
 import { extractSyncMarker } from './utils/extractSyncMarker';
 import { buildProxy2Request } from './utils/redirectToProxy2';
 import { showSyncFallbackNotice } from '../notification/showSyncFallbackNotice';
-import { computeDelta, warmCache } from '../deltaDb';
+import { computeDelta, computeRemoteDelta, warmCache } from '../deltaDb';
 
 /** hex-encoded "database/database.bin" */
 const DB_BIN_HEX = Array.from(new TextEncoder().encode('database/database.bin'))
@@ -55,14 +55,23 @@ const patchedFetch: typeof fetch = function (input, init) {
 
     const filePath = extractHeader(init.headers, FILE_PATH_HEADER);
 
-    // .meta.meta 체인 무한 성장 방지: 클라이언트에서 write 자체를 차단
+    // 불필요한 write 차단 + 경량화
     if (filePath) {
       try {
-        if (hexDecode(filePath).includes('.meta.meta')) {
+        const decoded = hexDecode(filePath);
+        if (decoded.includes('.meta.meta')) {
           return Promise.resolve(new Response(JSON.stringify({ success: true }), {
             status: 200,
             headers: { 'content-type': 'application/json' },
           }));
+        }
+        // dbbackup → sync 서버가 cached binary로 대신 write (6.6MB 업로드 제거)
+        if (decoded.includes('dbbackup-')) {
+          return (async () => {
+            const resp = await sendBackupRequest(init.headers);
+            if (resp) return resp;
+            return fetchWriteWithRetry(input, init);
+          })();
         }
       } catch {
         // hex 디코딩 실패 시 정상 전달
@@ -77,46 +86,39 @@ const patchedFetch: typeof fetch = function (input, init) {
         if (body instanceof Uint8Array) {
           const delta = computeDelta(body);
           if (delta) {
-            try {
-              const controller = new AbortController();
-              const timeout = setTimeout(() => controller.abort(), 15000);
-              const resp = await originalFetch.call(window, '/sync/delta-dbwrite', {
-                method: 'POST',
-                body: JSON.stringify(delta),
-                signal: controller.signal,
-                headers: {
-                  'content-type': 'application/json',
-                  [RISU_AUTH_HEADER]: extractHeader(buffered.headers, RISU_AUTH_HEADER) ?? '',
-                  [CLIENT_ID_HEADER]: CLIENT_ID,
-                },
-              });
-              clearTimeout(timeout);
-              if (resp.ok) return resp;
-            } catch {
-              // delta 실패 → 전체 전송 fallback
-            }
+            const resp = await sendDelta(delta, buffered.headers);
+            if (resp) return resp;
           }
         }
         return fetchWriteWithRetry(input, buffered);
       })();
     }
 
-    // Remote block write dedup: 해시가 동일하면 요청 자체를 보내지 않음
+    // Remote block write → delta 시도, 실패 시 전체 전송 fallback
     const charId = extractRemoteCharId(init.headers);
     if (charId) {
       return (async () => {
         const buffered = await ensureBufferedBody(init);
-        try {
-          const body = buffered.body;
-          if (body instanceof Uint8Array &&
-              await isUnchangedRemoteBlock(charId, body)) {
-            return new Response(JSON.stringify({ success: true }), {
-              status: 200,
-              headers: { 'content-type': 'application/json' },
-            });
+        const body = buffered.body;
+        if (body instanceof Uint8Array) {
+          // dedup: 해시가 동일하면 요청 자체를 보내지 않음
+          try {
+            if (await isUnchangedRemoteBlock(charId, body)) {
+              return new Response(JSON.stringify({ success: true }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+              });
+            }
+          } catch {
+            // dedup 실패 시 계속 진행
           }
-        } catch {
-          // dedup 실패 시 정상 전달
+
+          // delta 시도
+          const delta = computeRemoteDelta(charId, body);
+          if (delta) {
+            const resp = await sendDelta(delta, buffered.headers);
+            if (resp) return resp;
+          }
         }
         return fetchWriteWithRetry(input, buffered);
       })();
@@ -154,5 +156,45 @@ const patchedFetch: typeof fetch = function (input, init) {
 
   return originalFetch.call(window, input, init!);
 };
+
+/** /sync/backup 요청. sync 서버가 cached binary로 backup write. 실패 시 null. */
+async function sendBackupRequest(headers: HeadersInit): Promise<Response | null> {
+  try {
+    const resp = await originalFetch.call(window, '/sync/backup', {
+      method: 'POST',
+      headers: {
+        [RISU_AUTH_HEADER]: extractHeader(headers, RISU_AUTH_HEADER) ?? '',
+        [CLIENT_ID_HEADER]: CLIENT_ID,
+      },
+    });
+    if (resp.ok) return resp;
+  } catch {
+    // 실패 → caller가 full write fallback
+  }
+  return null;
+}
+
+/** delta payload를 /sync/delta-write로 전송. 성공 시 Response, 실패 시 null. */
+async function sendDelta(delta: import('../deltaDb').DeltaPayload, headers: HeadersInit): Promise<Response | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const resp = await originalFetch.call(window, '/sync/delta-write', {
+      method: 'POST',
+      body: JSON.stringify(delta),
+      signal: controller.signal,
+      headers: {
+        'content-type': 'application/json',
+        [RISU_AUTH_HEADER]: extractHeader(headers, RISU_AUTH_HEADER) ?? '',
+        [CLIENT_ID_HEADER]: CLIENT_ID,
+      },
+    });
+    clearTimeout(timeout);
+    if (resp.ok) return resp;
+  } catch {
+    // delta 실패 → caller가 full write fallback
+  }
+  return null;
+}
 
 window.fetch = patchedFetch;

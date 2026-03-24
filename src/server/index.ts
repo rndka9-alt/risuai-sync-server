@@ -21,7 +21,7 @@ import { SYNC_MARKER_KEY } from '../shared/syncMarker';
 import { sendJson } from './utils/sendJson';
 import { notifyWriteFailed } from './utils/notifyWriteFailed';
 import { sendUpstreamWithRetry } from './utils/sendUpstreamWithRetry';
-import { handleDeltaDbWrite, setCachedDbBinary } from './utils/deltaDbWrite';
+import { handleDeltaWrite, getCachedDbBinary, setCachedDbBinary } from './utils/deltaDbWrite';
 import { initAuth, issueInternalToken, isAuthReady } from './utils/risuAuth';
 import { proxyRequest } from './utils/proxyRequest';
 import { broadcastPlainFetchWarning } from './utils/broadcast';
@@ -788,13 +788,14 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    // /sync/delta-dbwrite — auth 포함, auth 블록 밖에서 처리
-    if (req.method === 'POST' && url.pathname === '/sync/delta-dbwrite') {
+    // /sync/delta-write
+    if (req.method === 'POST' && url.pathname === '/sync/delta-write') {
+      const remoteWriteOps = { reserveRemoteWrite: sync.reserveRemoteWrite, enqueueRemoteWrite: sync.enqueueRemoteWrite, skipRemoteWrite: sync.skipRemoteWrite };
       const httpClientId = typeof req.headers[config.CLIENT_ID_HEADER] === 'string'
         ? req.headers[config.CLIENT_ID_HEADER]
         : null;
       if (isTrustedClient(httpClientId)) {
-        handleDeltaDbWrite(req, res, sync.processDbWrite, notifyWriteFailed);
+        handleDeltaWrite(req, res, sync.processDbWrite, remoteWriteOps, notifyWriteFailed);
         return;
       }
       const risuAuth = req.headers[config.RISU_AUTH_HEADER];
@@ -807,7 +808,63 @@ const server = http.createServer((req, res) => {
           sendJson(res, 401, { error: 'unauthorized' });
           return;
         }
-        handleDeltaDbWrite(req, res, sync.processDbWrite, notifyWriteFailed);
+        handleDeltaWrite(req, res, sync.processDbWrite, remoteWriteOps, notifyWriteFailed);
+      }).catch(() => {
+        if (!res.headersSent) sendJson(res, 502, { error: 'auth verification failed' });
+      });
+      return;
+    }
+
+    // /sync/backup — cached database.bin으로 dbbackup write (클라이언트 6.6MB 업로드 제거)
+    if (req.method === 'POST' && url.pathname === '/sync/backup') {
+      const handleBackup = () => {
+        const cached = getCachedDbBinary();
+        if (!cached) {
+          sendJson(res, 409, { error: 'no_cache' });
+          return;
+        }
+        const backupPath = `database/dbbackup-${(Date.now() / 100).toFixed()}.bin`;
+        const headers: Record<string, string | string[] | undefined> = {
+          ...req.headers,
+          host: config.UPSTREAM.host,
+          'file-path': Buffer.from(backupPath, 'utf-8').toString('hex'),
+          'content-type': 'application/octet-stream',
+          'content-length': String(cached.length),
+        };
+        delete headers[config.CLIENT_ID_HEADER];
+        delete headers['x-sync-client-id'];
+        sendUpstreamWithRetry(
+          { path: '/api/write', method: 'POST', headers, body: cached },
+          (proxyRes) => {
+            res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers);
+            proxyRes.pipe(res);
+          },
+          () => {
+            if (!res.headersSent) {
+              res.writeHead(502, { 'content-type': 'text/plain' });
+            }
+            res.end('Bad Gateway');
+          },
+        );
+      };
+      const httpClientId = typeof req.headers[config.CLIENT_ID_HEADER] === 'string'
+        ? req.headers[config.CLIENT_ID_HEADER]
+        : null;
+      if (isTrustedClient(httpClientId)) {
+        handleBackup();
+        return;
+      }
+      const risuAuth = req.headers[config.RISU_AUTH_HEADER];
+      if (typeof risuAuth !== 'string') {
+        sendJson(res, 401, { error: 'unauthorized' });
+        return;
+      }
+      verifyRisuAuth(risuAuth).then((valid) => {
+        if (!valid) {
+          sendJson(res, 401, { error: 'unauthorized' });
+          return;
+        }
+        handleBackup();
       }).catch(() => {
         if (!res.headersSent) sendJson(res, 502, { error: 'auth verification failed' });
       });
@@ -1021,7 +1078,7 @@ const server = http.createServer((req, res) => {
           let responseBuf = originalBuf;
 
           if (proxyRes.statusCode! >= 200 && proxyRes.statusCode! < 300) {
-            // delta-dbwrite 캐시: 클라이언트 최초 read 시 채움
+            // delta-write 캐시: 클라이언트 최초 read 시 채움
             setCachedDbBinary(originalBuf);
 
             try {

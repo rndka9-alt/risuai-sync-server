@@ -1,1 +1,2 @@
-export { handleDeltaDbWrite, getCachedDbBinary, setCachedDbBinary } from './deltaDbWrite';
+export { handleDeltaWrite, getCachedDbBinary, setCachedDbBinary } from './deltaDbWrite';
+export type { RemoteWriteOps } from './deltaDbWrite';
