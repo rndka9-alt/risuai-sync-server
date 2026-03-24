@@ -28,7 +28,7 @@ import { broadcastPlainFetchWarning } from './utils/broadcast';
 import { verifyRisuAuth } from './utils/verifyRisuAuth';
 import { handleClientLog } from './utils/handleClientLog';
 import { hashRequestBody } from './utils/hashRequestBody';
-import { pushLlmEvent } from './utils/monitorPush';
+import { pushLlmEvent, getActiveStreamIds } from './utils/monitorPush';
 import { extractResponseMeta } from './llm-response-format/extractResponseMeta';
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -553,6 +553,11 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       // SSRF 방어: private/internal 네트워크 차단
       if (isPrivateHost(decoded.targetUrl.hostname)) {
         logger.warn('Blocked SSRF attempt to private host', { hostname: decoded.targetUrl.hostname });
+        emitMonitorEvent({
+          type: 'end', streamId, responseType: 'error',
+          duration: 0, textLength: 0, outputPreview: '', status: 403,
+          error: 'private_host_blocked',
+        });
         res.writeHead(403, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ error: 'private_host_blocked' }));
         return;
@@ -730,10 +735,8 @@ const server = http.createServer((req, res) => {
   // --- /_internal/* (인증 불필요, Caddy에서 외부 차단) ---
   if (req.method === 'GET' && req.url === '/_internal/streams') {
     const now = Date.now();
-    const active = streamBuffer.getActiveStreamsDetailed().map((s) => ({
-      ...s,
-      elapsedMs: now - s.createdAt,
-    }));
+    const activeIds = getActiveStreamIds();
+    const active = Array.from(activeIds, (id) => ({ id }));
     const recent = streamBuffer.getRecentStreamsDetailed(5).map((s) => ({
       ...s,
       elapsedMs: (s.completedAt ?? now) - s.createdAt,
