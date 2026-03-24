@@ -273,7 +273,16 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
   const targetCharId = typeof rawTargetCharId === 'string' ? rawTargetCharId : null;
 
   // LLM 직접 프록시 디코딩 시도 (body 소비 전에 헤더만 읽음)
-  const decoded = decodeProxy2Headers(req);
+  let decoded: ReturnType<typeof decodeProxy2Headers>;
+  try {
+    decoded = decodeProxy2Headers(req);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'decode failed';
+    logger.warn('proxy2 decode error', { error: message });
+    res.writeHead(400, { 'content-type': 'text/plain' });
+    res.end(message);
+    return;
+  }
 
   // Client disconnect tracking
   let clientDisconnected = false;

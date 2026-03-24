@@ -25,7 +25,7 @@ export function forwardToLlm(
       hostname: decoded.targetUrl.hostname,
       port: decoded.targetUrl.port || defaultPort,
       path: decoded.targetUrl.pathname + decoded.targetUrl.search,
-      method: 'POST',
+      method: decoded.method,
       headers,
     },
     (proxyRes) => {

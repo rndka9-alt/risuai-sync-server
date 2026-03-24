@@ -1,16 +1,14 @@
 import { CLIENT_ID, CLIENT_ID_HEADER, PROXY2_TARGET_HEADER } from '../../config';
-import { extractHeader } from '../../utils/extractHeader';
-import { setHeader } from './setHeader';
 import { findStreamTarget } from './findStreamTarget';
 
 /**
- * 직접 LLM 요청을 /proxy2 포맷으로 변환한다.
+ * 외부 요청을 /proxy2 포맷으로 변환한다.
  * risu-url, risu-header 헤더를 구성하고 sync 헤더를 추가한다.
  */
 export function buildProxy2Request(
   originalUrl: string,
   originalInit: RequestInit,
-  cleanBody: string,
+  body: BodyInit | null | undefined,
 ): RequestInit {
   const originalHeaders: Record<string, string> = {};
   if (originalInit.headers) {
@@ -27,10 +25,13 @@ export function buildProxy2Request(
     }
   }
 
+  const originalMethod = originalInit.method || 'GET';
+
   const headers: Record<string, string> = {
     'risu-url': encodeURIComponent(originalUrl),
     'risu-header': encodeURIComponent(JSON.stringify(originalHeaders)),
-    'Content-Type': 'application/json',
+    'risu-method': originalMethod,
+    'Content-Type': originalHeaders['content-type'] || originalHeaders['Content-Type'] || 'application/json',
     [CLIENT_ID_HEADER]: CLIENT_ID,
   };
 
@@ -42,7 +43,7 @@ export function buildProxy2Request(
   return {
     method: 'POST',
     headers,
-    body: cleanBody,
+    body: body ?? undefined,
     signal: originalInit.signal,
   };
 }

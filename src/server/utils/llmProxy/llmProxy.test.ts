@@ -102,10 +102,17 @@ describe('decodeProxy2Headers', () => {
     expect(decodeProxy2Headers(mockReq({ 'risu-url': 'not-a-url' }))).toBeNull();
   });
 
+  it('throws when risu-url is present but risu-method is missing', () => {
+    expect(() => decodeProxy2Headers(mockReq({
+      'risu-url': encodeURIComponent('https://api.example.com/v1'),
+    }))).toThrow('risu-method header is required');
+  });
+
   it('decodes risu-url to URL', () => {
     const url = 'https://api.openai.com/v1/chat/completions';
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent(url),
+      'risu-method': 'POST',
     }));
     if (!result) { expect.unreachable('expected non-null'); return; }
     expect(result.targetUrl.href).toBe(url);
@@ -116,6 +123,7 @@ describe('decodeProxy2Headers', () => {
     const url = 'https://api.anthropic.com/v1/messages?beta=true';
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent(url),
+      'risu-method': 'POST',
     }));
     if (!result) { expect.unreachable('expected non-null'); return; }
     expect(result.targetUrl.pathname).toBe('/v1/messages');
@@ -125,6 +133,7 @@ describe('decodeProxy2Headers', () => {
   it('returns empty headers when risu-header is absent', () => {
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent('https://api.example.com/v1'),
+      'risu-method': 'GET',
     }));
     if (!result) { expect.unreachable('expected non-null'); return; }
     expect(Object.keys(result.headers)).toHaveLength(0);
@@ -138,6 +147,7 @@ describe('decodeProxy2Headers', () => {
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent('https://api.example.com/v1'),
       'risu-header': encodeURIComponent(JSON.stringify(headers)),
+      'risu-method': 'POST',
     }));
     if (!result) { expect.unreachable('expected non-null'); return; }
     expect(result.headers['content-type']).toBe('application/json');
@@ -154,6 +164,7 @@ describe('decodeProxy2Headers', () => {
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent('https://api.example.com/v1'),
       'risu-header': encodeURIComponent(JSON.stringify(headers)),
+      'risu-method': 'POST',
     }));
     if (!result) { expect.unreachable('expected non-null'); return; }
     expect(result.headers['content-type']).toBe('application/json');
@@ -166,6 +177,7 @@ describe('decodeProxy2Headers', () => {
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent('https://api.example.com/v1'),
       'risu-header': 'not-valid-json',
+      'risu-method': 'POST',
     }));
     expect(result).toBeNull();
   });
@@ -174,6 +186,7 @@ describe('decodeProxy2Headers', () => {
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent('https://api.example.com/v1'),
       'risu-header': encodeURIComponent(JSON.stringify(['a', 'b'])),
+      'risu-method': 'POST',
     }));
     if (!result) { expect.unreachable('expected non-null'); return; }
     expect(Object.keys(result.headers)).toHaveLength(0);
@@ -183,9 +196,19 @@ describe('decodeProxy2Headers', () => {
     const url = 'https://api.example.com/v1?q=hello%20world';
     const result = decodeProxy2Headers(mockReq({
       'risu-url': encodeURIComponent(url),
+      'risu-method': 'GET',
     }));
     if (!result) { expect.unreachable('expected non-null'); return; }
     expect(result.targetUrl.search).toBe('?q=hello%20world');
+  });
+
+  it('decodes risu-method header', () => {
+    const result = decodeProxy2Headers(mockReq({
+      'risu-url': encodeURIComponent('https://api.example.com/v1'),
+      'risu-method': 'GET',
+    }));
+    if (!result) { expect.unreachable('expected non-null'); return; }
+    expect(result.method).toBe('GET');
   });
 });
 
@@ -231,7 +254,7 @@ describe('forwardToLlm', () => {
 
     await new Promise<void>((resolve, reject) => {
       forwardToLlm(
-        { targetUrl: new URL(`http://localhost:${port}/v1/chat`), headers: { 'content-type': 'application/json' } },
+        { targetUrl: new URL(`http://localhost:${port}/v1/chat`), headers: { 'content-type': 'application/json' }, method: 'POST' },
         Buffer.from('{"test":true}'),
         (proxyRes) => {
           expect(proxyRes.statusCode).toBe(200);
@@ -258,7 +281,7 @@ describe('forwardToLlm', () => {
 
     await new Promise<void>((resolve, reject) => {
       forwardToLlm(
-        { targetUrl: new URL(`http://localhost:${port}/v1`), headers: { 'authorization': 'Bearer test' } },
+        { targetUrl: new URL(`http://localhost:${port}/v1`), headers: { 'authorization': 'Bearer test' }, method: 'POST' },
         Buffer.from('hello'),
         (proxyRes) => {
           expect(receivedHeaders['host']).toBe(`localhost:${port}`);
@@ -286,7 +309,7 @@ describe('forwardToLlm', () => {
 
     await new Promise<void>((resolve, reject) => {
       forwardToLlm(
-        { targetUrl: new URL(`http://localhost:${port}/v1`), headers: {} },
+        { targetUrl: new URL(`http://localhost:${port}/v1`), headers: {}, method: 'POST' },
         Buffer.alloc(0),
         (proxyRes) => {
           expect(proxyRes.headers['content-security-policy']).toBeUndefined();
@@ -305,7 +328,7 @@ describe('forwardToLlm', () => {
   it('calls onError when connection fails', async () => {
     await new Promise<void>((resolve) => {
       forwardToLlm(
-        { targetUrl: new URL('http://localhost:1/unreachable'), headers: {} },
+        { targetUrl: new URL('http://localhost:1/unreachable'), headers: {}, method: 'POST' },
         Buffer.alloc(0),
         () => { expect.unreachable('should not receive response'); },
         (err) => {
@@ -330,7 +353,7 @@ describe('forwardToLlm', () => {
     const receivedChunks: string[] = [];
     await new Promise<void>((resolve, reject) => {
       forwardToLlm(
-        { targetUrl: new URL(`http://localhost:${port}/v1`), headers: {} },
+        { targetUrl: new URL(`http://localhost:${port}/v1`), headers: {}, method: 'POST' },
         Buffer.from('{}'),
         (proxyRes) => {
           expect(proxyRes.headers['content-type']).toBe('text/event-stream');
@@ -356,7 +379,7 @@ describe('forwardToLlm', () => {
 
     await new Promise<void>((resolve, reject) => {
       forwardToLlm(
-        { targetUrl: new URL(`http://localhost:${port}/v1`), headers: {} },
+        { targetUrl: new URL(`http://localhost:${port}/v1`), headers: {}, method: 'POST' },
         Buffer.from('{}'),
         (proxyRes) => {
           expect(proxyRes.statusCode).toBe(429);
@@ -378,7 +401,7 @@ describe('forwardToLlm', () => {
 
     await new Promise<void>((resolve, reject) => {
       forwardToLlm(
-        { targetUrl: new URL(`http://localhost:${port}/v1/messages?beta=true`), headers: {} },
+        { targetUrl: new URL(`http://localhost:${port}/v1/messages?beta=true`), headers: {}, method: 'POST' },
         Buffer.alloc(0),
         (proxyRes) => {
           expect(receivedUrl).toBe('/v1/messages?beta=true');
@@ -407,7 +430,7 @@ describe('forwardToLlm', () => {
 
     await new Promise<void>((resolve) => {
       const clientReq = forwardToLlm(
-        { targetUrl: new URL(`http://localhost:${port}/v1`), headers: {} },
+        { targetUrl: new URL(`http://localhost:${port}/v1`), headers: {}, method: 'POST' },
         Buffer.from('{}'),
         (proxyRes) => {
           proxyRes.once('data', () => {

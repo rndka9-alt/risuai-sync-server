@@ -37,5 +37,10 @@ export function decodeProxy2Headers(req: http.IncomingMessage): DecodedProxy2 | 
     }
   }
 
-  return { targetUrl, headers };
+  const rawMethod = req.headers['risu-method'];
+  if (typeof rawMethod !== 'string' || rawMethod.length === 0) {
+    throw new Error('risu-method header is required');
+  }
+
+  return { targetUrl, headers, method: rawMethod };
 }

@@ -8,6 +8,7 @@ import { findStreamTarget } from './utils/findStreamTarget';
 import { fetchWriteWithRetry } from './utils/fetchWriteWithRetry';
 import { extractSyncMarker } from './utils/extractSyncMarker';
 import { buildProxy2Request } from './utils/redirectToProxy2';
+import { getProxyUrls } from './utils/getProxyUrls';
 import { showSyncFallbackNotice } from '../notification/showSyncFallbackNotice';
 import { computeDelta, computeRemoteDelta, warmCache, warmRemoteCache } from '../deltaDb';
 
@@ -56,6 +57,23 @@ const patchedFetch: typeof fetch = function (input, init) {
             ...init,
             body: marker.cleanBody,
           });
+        }
+      })();
+    }
+  }
+
+  // URL prefix 매칭 → proxy2 리다이렉트 (LLM 마커 없는 일반 요청)
+  if (inputUrl && !inputUrl.startsWith('/')) {
+    const proxyUrls = getProxyUrls();
+    const matched = proxyUrls.some((url) => inputUrl.startsWith(url));
+    if (matched) {
+      const proxy2Init = buildProxy2Request(inputUrl, init ?? {}, init?.body);
+      return (async () => {
+        try {
+          return await patchedFetch('/proxy2', proxy2Init);
+        } catch {
+          showSyncFallbackNotice();
+          return originalFetch.call(window, input, init);
         }
       })();
     }

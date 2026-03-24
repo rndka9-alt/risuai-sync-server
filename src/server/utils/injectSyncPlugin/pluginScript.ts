@@ -4,8 +4,8 @@
  */
 export function buildPluginScript(markerKey: string): string {
   return [
-    '//@name [Proxy::sync] Send llm via proxy2',
-    '//@display-name [Proxy::sync] Send llm via proxy2',
+    '//@name [Proxy::sync] Send via proxy2',
+    '//@display-name [Proxy::sync] Send via proxy2',
     '//@api 3.0',
     '',
     '(async () => {',

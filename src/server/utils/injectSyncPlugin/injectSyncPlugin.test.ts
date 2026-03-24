@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { injectSyncPlugin } from './injectSyncPlugin';
-import { SYNC_PLUGIN_NAME, SYNC_MARKER_KEY } from '../../../shared/syncMarker';
+import { SYNC_PLUGIN_NAME, SYNC_PLUGIN_NAME_LEGACY, SYNC_MARKER_KEY, PROXY_URLS_ARG_KEY } from '../../../shared/syncMarker';
 
 describe('injectSyncPlugin', () => {
   it('빈 plugins 배열에 플러그인을 주입한다', () => {
@@ -64,5 +64,69 @@ describe('injectSyncPlugin', () => {
     const result = injectSyncPlugin(root);
 
     expect(() => JSON.parse(result)).not.toThrow();
+  });
+
+  it('urls textarea 속성이 포함된다', () => {
+    const root = JSON.stringify({ plugins: [] });
+    const result = JSON.parse(injectSyncPlugin(root));
+    const plugin = result.plugins[0];
+
+    expect(plugin.arguments[PROXY_URLS_ARG_KEY]).toBe('string');
+    expect(plugin.argMeta[PROXY_URLS_ARG_KEY].textarea).toBe(true);
+    expect(plugin.realArg[PROXY_URLS_ARG_KEY]).toBe('');
+  });
+
+  describe('레거시 마이그레이션', () => {
+    it('이전 이름 플러그인을 새 이름으로 마이그레이션한다', () => {
+      const root = JSON.stringify({
+        plugins: [{ name: SYNC_PLUGIN_NAME_LEGACY, enabled: true, script: 'old' }],
+      });
+      const result = JSON.parse(injectSyncPlugin(root));
+
+      expect(result.plugins).toHaveLength(1);
+      expect(result.plugins[0].name).toBe(SYNC_PLUGIN_NAME);
+      expect(result.plugins[0].displayName).toBe(SYNC_PLUGIN_NAME);
+      expect(result.plugins[0].script).toContain(SYNC_MARKER_KEY);
+    });
+
+    it('마이그레이션 시 urls 속성을 추가한다', () => {
+      const root = JSON.stringify({
+        plugins: [{
+          name: SYNC_PLUGIN_NAME_LEGACY,
+          enabled: true,
+          arguments: {},
+          argMeta: {},
+          realArg: {},
+        }],
+      });
+      const result = JSON.parse(injectSyncPlugin(root));
+      const plugin = result.plugins[0];
+
+      expect(plugin.arguments[PROXY_URLS_ARG_KEY]).toBe('string');
+      expect(plugin.argMeta[PROXY_URLS_ARG_KEY].textarea).toBe(true);
+      expect(plugin.realArg[PROXY_URLS_ARG_KEY]).toBe('');
+    });
+
+    it('마이그레이션 시 기존 enabled 상태를 보존한다', () => {
+      const root = JSON.stringify({
+        plugins: [{ name: SYNC_PLUGIN_NAME_LEGACY, enabled: false }],
+      });
+      const result = JSON.parse(injectSyncPlugin(root));
+
+      expect(result.plugins[0].enabled).toBe(false);
+    });
+
+    it('마이그레이션 시 기존 realArg.urls 값을 보존한다', () => {
+      const root = JSON.stringify({
+        plugins: [{
+          name: SYNC_PLUGIN_NAME_LEGACY,
+          enabled: true,
+          realArg: { [PROXY_URLS_ARG_KEY]: 'https://example.com' },
+        }],
+      });
+      const result = JSON.parse(injectSyncPlugin(root));
+
+      expect(result.plugins[0].realArg[PROXY_URLS_ARG_KEY]).toBe('https://example.com');
+    });
   });
 });

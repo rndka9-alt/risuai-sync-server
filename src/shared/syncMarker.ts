@@ -7,4 +7,10 @@
 export const SYNC_MARKER_KEY = '__risu_sync_meta__';
 
 /** RisuAI V3 플러그인 이름 (db.plugins 식별자) */
-export const SYNC_PLUGIN_NAME = '[Proxy::sync] Send llm via proxy2';
+export const SYNC_PLUGIN_NAME = '[Proxy::sync] Send via proxy2';
+
+/** 마이그레이션용 이전 플러그인 이름 */
+export const SYNC_PLUGIN_NAME_LEGACY = '[Proxy::sync] Send llm via proxy2';
+
+/** 플러그인 realArg 키: proxy2 경유 대상 URL 목록 */
+export const PROXY_URLS_ARG_KEY = 'urls';
