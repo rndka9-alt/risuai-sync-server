@@ -315,7 +315,8 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
 
     // 방어적 마커 제거: LLM API에 마커가 전달되지 않도록 strip
     const bodyStr = body.toString('utf-8');
-    if (bodyStr.includes(SYNC_MARKER_KEY)) {
+    const hadSyncMarker = bodyStr.includes(SYNC_MARKER_KEY);
+    if (hadSyncMarker) {
       try {
         const parsed: Record<string, unknown> = JSON.parse(bodyStr);
         delete parsed[SYNC_MARKER_KEY];
@@ -323,11 +324,15 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       } catch { /* JSON 파싱 실패 시 원본 유지 */ }
     }
 
+    // LLM 요청 판별: sync marker 존재 || body에 "model" 필드 존재 시 모니터링
+    const shouldMonitor = hadSyncMarker || bodyStr.includes('"model"');
+    const emitMonitorEvent: typeof pushLlmEvent = shouldMonitor ? pushLlmEvent : () => {};
+
     const llmTargetUrl = decoded ? decoded.targetUrl.href : '';
     const llmStartTime = Date.now();
     const streamId = crypto.randomBytes(8).toString('hex');
 
-    pushLlmEvent({
+    emitMonitorEvent({
       type: 'start',
       streamId: streamId,
       sender: senderClientId,
@@ -355,7 +360,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
           res.end('Stream subscribe failed');
         }
       }
-      pushLlmEvent({
+      emitMonitorEvent({
         type: 'end',
         streamId: streamId,
         responseType: 'cache',
@@ -405,7 +410,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
             ? proxyRes.headers['content-type']
             : '';
           const meta = extractResponseMeta(responseBody, resContentType);
-          pushLlmEvent({
+          emitMonitorEvent({
             type: 'end',
             streamId: streamId,
             responseType: 'non-sse',
@@ -455,7 +460,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
         const sseMeta = rawBody
           ? extractResponseMeta(rawBody, 'text/event-stream')
           : { finishReason: '', outputTokens: 0 };
-        pushLlmEvent({
+        emitMonitorEvent({
           type: 'end',
           streamId: streamId,
           responseType: 'sse',
@@ -486,7 +491,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
         const errMeta = rawBodyOnErr
           ? extractResponseMeta(rawBodyOnErr, 'text/event-stream')
           : { finishReason: '', outputTokens: 0 };
-        pushLlmEvent({
+        emitMonitorEvent({
           type: 'end',
           streamId: streamId,
           responseType: 'sse',
@@ -514,7 +519,7 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       clearKeepAlive();
       pendingUpstreams.delete(streamId);
       const wasAborted = abortedStreams.delete(streamId);
-      pushLlmEvent({
+      emitMonitorEvent({
         type: 'end',
         streamId: streamId,
         responseType: wasAborted ? 'aborted' : 'error',
