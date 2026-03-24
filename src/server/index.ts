@@ -1104,7 +1104,6 @@ server.listen(config.PORT, () => {
   logger.info(`Server listening on port ${config.PORT}`);
   logger.info(`Upstream: ${config.UPSTREAM.href}`);
   logger.info(`DB path: ${config.DB_PATH}`);
-  logger.info(`Max cache size: ${(config.MAX_CACHE_SIZE / 1048576).toFixed(0)}MB`);
   logger.info(`Max log entries: ${config.MAX_LOG_ENTRIES}`);
   logger.info(`Log level: ${config.LOG_LEVEL}`);
 

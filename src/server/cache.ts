@@ -21,50 +21,22 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * Data cache (LRU eviction, 용량 제한).
- * 파싱된 JS 객체를 직접 저장. size 추정은 set 시 JSON.stringify length.
+ * Data cache — 용량 제한 없는 단순 캐시.
+ * 항목 수가 캐릭터 수 + 고정 블록(~5개)으로 자연 제한되므로 eviction 불필요.
  */
-class SizedCache {
-  private maxSize: number;
-  private cache = new Map<string, { data: unknown; size: number }>();
-  private currentSize = 0;
-
-  constructor(maxSize: number) {
-    this.maxSize = maxSize;
-  }
+class DataCache {
+  private cache = new Map<string, unknown>();
 
   set(name: string, value: unknown): void {
-    const size = typeof value === 'string'
-      ? Buffer.byteLength(value, 'utf-8')
-      : Buffer.byteLength(JSON.stringify(value), 'utf-8');
-    if (this.cache.has(name)) {
-      this.currentSize -= this.cache.get(name)!.size;
-      this.cache.delete(name);
-    }
-    while (this.currentSize + size > this.maxSize && this.cache.size > 0) {
-      const oldest = this.cache.keys().next().value!;
-      this.currentSize -= this.cache.get(oldest)!.size;
-      this.cache.delete(oldest);
-    }
-    if (size > this.maxSize) return;
-    this.cache.set(name, { data: value, size });
-    this.currentSize += size;
+    this.cache.set(name, value);
   }
 
   get(name: string): unknown | null {
-    const entry = this.cache.get(name);
-    if (!entry) return null;
-    // LRU: move to end
-    this.cache.delete(name);
-    this.cache.set(name, entry);
-    return entry.data;
+    return this.cache.get(name) ?? null;
   }
 
   delete(name: string): void {
-    if (this.cache.has(name)) {
-      this.currentSize -= this.cache.get(name)!.size;
-      this.cache.delete(name);
-    }
+    this.cache.delete(name);
   }
 
   get size(): number {
@@ -72,7 +44,7 @@ class SizedCache {
   }
 }
 
-export const dataCache = new SizedCache(config.MAX_CACHE_SIZE);
+export const dataCache = new DataCache();
 
 /** 내부 상태 */
 export const epoch = Date.now();

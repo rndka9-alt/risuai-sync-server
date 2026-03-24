@@ -6,7 +6,6 @@ vi.mock('./config', () => ({
   UPSTREAM: new URL('http://localhost:6001'),
 
   DB_PATH: 'database/database.bin',
-  MAX_CACHE_SIZE: 200,
   MAX_LOG_ENTRIES: 5,
   LOG_LEVEL: 'error',
   SCRIPT_TAG: '',
@@ -21,7 +20,7 @@ vi.mock('./logger', () => ({
   isDebug: false,
 }));
 
-describe('dataCache (SizedCache)', () => {
+describe('dataCache', () => {
   let cache: typeof import('./cache');
 
   beforeEach(async () => {
@@ -51,41 +50,11 @@ describe('dataCache (SizedCache)', () => {
     expect(cache.dataCache.size).toBe(2);
   });
 
-  it('evicts oldest entry when size limit exceeded', () => {
-    // MAX_CACHE_SIZE = 200 bytes
-    cache.dataCache.set('a', 'x'.repeat(80));  // 80
-    cache.dataCache.set('b', 'y'.repeat(80));  // 160
-    cache.dataCache.set('c', 'z'.repeat(80));  // 240 > 200 → evict 'a'
-
-    expect(cache.dataCache.get('a')).toBeNull();
-    expect(cache.dataCache.get('b')).not.toBeNull();
-    expect(cache.dataCache.get('c')).not.toBeNull();
-  });
-
-  it('LRU: accessing an entry moves it to the back of eviction queue', () => {
-    cache.dataCache.set('a', 'x'.repeat(80));  // 80
-    cache.dataCache.set('b', 'y'.repeat(80));  // 160
-    cache.dataCache.get('a');                    // 'a' is now most recent
-    cache.dataCache.set('c', 'z'.repeat(80));  // 240 > 200 → evict 'b' (oldest)
-
-    expect(cache.dataCache.get('a')).not.toBeNull();
-    expect(cache.dataCache.get('b')).toBeNull();
-    expect(cache.dataCache.get('c')).not.toBeNull();
-  });
-
-  it('rejects entries larger than max size', () => {
-    cache.dataCache.set('huge', 'x'.repeat(300));
-    expect(cache.dataCache.get('huge')).toBeNull();
-    expect(cache.dataCache.size).toBe(0);
-  });
-
-  it('updates existing entry in place without double-counting size', () => {
-    cache.dataCache.set('a', 'x'.repeat(80));
-    cache.dataCache.set('a', 'y'.repeat(80));  // update, not add
-    cache.dataCache.set('b', 'z'.repeat(80));  // should fit (80+80 = 160 < 200)
-
-    expect(cache.dataCache.get('a')).toBe('y'.repeat(80));
-    expect(cache.dataCache.get('b')).not.toBeNull();
+  it('overwrites existing entry', () => {
+    cache.dataCache.set('a', 'old');
+    cache.dataCache.set('a', 'new');
+    expect(cache.dataCache.get('a')).toBe('new');
+    expect(cache.dataCache.size).toBe(1);
   });
 });
 

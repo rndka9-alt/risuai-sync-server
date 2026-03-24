@@ -7,7 +7,6 @@ vi.mock('./config', () => ({
   UPSTREAM: new URL('http://localhost:6001'),
 
   DB_PATH: 'database/database.bin',
-  MAX_CACHE_SIZE: 1048576,
   MAX_LOG_ENTRIES: 100,
   LOG_LEVEL: 'error',
   SCRIPT_TAG: '',

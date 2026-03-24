@@ -39,7 +39,6 @@ npm start
 | `PORT` | `3000` | sync-server 리스닝 포트 |
 | `UPSTREAM` | (필수) | RisuAI 서버 주소 (예: `http://risuai:6001`) |
 | `DB_PATH` | `database/database.bin` | RisuAI 데이터베이스 파일 경로 |
-| `MAX_CACHE_SIZE` | `104857600` (100MB) | 블록 데이터 캐시 최대 크기 (바이트) |
 | `MAX_LOG_ENTRIES` | `1000` | 변경 로그 최대 항목 수 |
 | `LOG_LEVEL` | `info` | 로그 레벨 (`debug` \| `info` \| `warn` \| `error`) |
 | `RETRY_MAX_ATTEMPTS` | `2` | upstream 쓰기 실패 시 재시도 횟수 |

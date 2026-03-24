@@ -34,7 +34,6 @@ if (!process.env.UPSTREAM) {
 }
 export const UPSTREAM = new URL(process.env.UPSTREAM);
 export const DB_PATH = process.env.DB_PATH || 'database/database.bin';
-export const MAX_CACHE_SIZE = parseInt(process.env.MAX_CACHE_SIZE || '104857600', 10);
 export const MAX_LOG_ENTRIES = parseInt(process.env.MAX_LOG_ENTRIES || '1000', 10);
 export const LOG_LEVEL = (process.env.LOG_LEVEL || 'info').toLowerCase();
 export const RETRY_MAX_ATTEMPTS = parseInt(process.env.RETRY_MAX_ATTEMPTS || '2', 10);
