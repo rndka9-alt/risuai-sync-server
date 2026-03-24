@@ -324,8 +324,8 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       } catch { /* JSON 파싱 실패 시 원본 유지 */ }
     }
 
-    // LLM 요청 판별: sync marker 존재 || body에 "model" 필드 존재 시 모니터링
-    const shouldMonitor = hadSyncMarker || bodyStr.includes('"model"');
+    // LLM 요청 판별: 플러그인이 주입한 sync marker 존재 시에만 모니터링
+    const shouldMonitor = hadSyncMarker;
     const emitMonitorEvent: typeof pushLlmEvent = shouldMonitor ? pushLlmEvent : () => {};
 
     const llmTargetUrl = decoded ? decoded.targetUrl.href : '';
