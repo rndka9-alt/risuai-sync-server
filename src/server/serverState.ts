@@ -20,7 +20,7 @@ export const freshClients = new Set<string>();
  * WS 연결 해제 시 즉시 삭제하지 않고 TTL(10분)을 두어,
  * 짧은 재연결 기간 동안 false delete를 방지한다.
  */
-export const clientRootCache = new Map<string, string>();
+export const clientRootCache = new Map<string, unknown>();
 
 /** 연결 해제 시각 기록 — TTL 정리용. 연결 중인 클라이언트는 엔트리 없음. */
 export const clientDisconnectedAt = new Map<string, number>();

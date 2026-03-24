@@ -106,19 +106,12 @@ export function handleDeltaDbWrite(
     // 각 블록에 patch 적용
     let patchedCount = 0;
     for (const [name, blockDelta] of Object.entries(delta.blocks)) {
-      const cachedJson = cache.dataCache.get(name);
-      if (cachedJson !== null) {
-        try {
-          const base: unknown = JSON.parse(cachedJson);
-          const patched = applyPatch(base, blockDelta.patch);
-          cache.dataCache.set(name, JSON.stringify(patched));
-        } catch {
-          // 파싱 실패 → patch를 전체 교체로 처리
-          cache.dataCache.set(name, JSON.stringify(blockDelta.patch));
-        }
+      const cached = cache.dataCache.get(name);
+      if (cached !== null) {
+        const patched = applyPatch(cached, blockDelta.patch);
+        cache.dataCache.set(name, patched);
       } else {
-        // 캐시에 없던 블록 → 새로 추가
-        cache.dataCache.set(name, JSON.stringify(blockDelta.patch));
+        cache.dataCache.set(name, blockDelta.patch);
       }
       cache.hashCache.set(name, { type: blockDelta.type, hash: '' });
       patchedCount++;

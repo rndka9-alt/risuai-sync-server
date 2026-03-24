@@ -826,7 +826,7 @@ describe('write ordering (DB)', () => {
     sync.enqueueDbWrite(seq1, buf1, 'client-a');
 
     // Cache should have Charlie (seq2, the newer data)
-    expect(cache.dataCache.get('char1')).toBe('{"name":"Charlie"}');
+    expect(cache.dataCache.get('char1')).toEqual({ name: 'Charlie' });
 
     // Client B should have received 2 broadcasts
     const bMsgs = sentMessages(clientB);
@@ -849,7 +849,7 @@ describe('write ordering (DB)', () => {
     sync.skipDbWrite(seq1);
 
     // Now seq2 should process
-    expect(cache.dataCache.get('char1')).toBe('{"name":"Charlie"}');
+    expect(cache.dataCache.get('char1')).toEqual({ name: 'Charlie' });
     expect(sentMessages(clientB).length).toBeGreaterThan(0);
   });
 });
@@ -896,7 +896,7 @@ describe('write ordering (remote block)', () => {
     sync.enqueueRemoteWrite(seq1, 'char1', buf1, 'client-a');
 
     // Cache should have Charlie (newer)
-    expect(cache.dataCache.get('char1')).toBe(JSON.stringify({ name: 'Charlie' }));
+    expect(cache.dataCache.get('char1')).toEqual({ name: 'Charlie' });
   });
 
   it('different charIds have independent queues', () => {
@@ -908,11 +908,11 @@ describe('write ordering (remote block)', () => {
 
     // charB arrives — should process immediately (independent queue)
     sync.enqueueRemoteWrite(seqB, 'charB', bufB, 'client-a');
-    expect(cache.dataCache.get('charB')).toBe(JSON.stringify({ name: 'Bob' }));
+    expect(cache.dataCache.get('charB')).toEqual({ name: 'Bob' });
 
     // charA arrives
     sync.enqueueRemoteWrite(seqA, 'charA', bufA, 'client-a');
-    expect(cache.dataCache.get('charA')).toBe(JSON.stringify({ name: 'Alice' }));
+    expect(cache.dataCache.get('charA')).toEqual({ name: 'Alice' });
   });
 });
 

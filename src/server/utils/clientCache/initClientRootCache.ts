@@ -8,8 +8,8 @@ import { clientRootCache, clientDisconnectedAt } from '../../serverState';
 export function initClientRootCache(clientId: string): void {
   clientDisconnectedAt.delete(clientId);
   if (clientRootCache.has(clientId)) return;
-  const rootJson = cache.dataCache.get('root');
-  if (rootJson) {
-    clientRootCache.set(clientId, rootJson);
+  const rootData = cache.dataCache.get('root');
+  if (rootData !== null) {
+    clientRootCache.set(clientId, rootData);
   }
 }

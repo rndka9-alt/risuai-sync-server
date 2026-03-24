@@ -43,19 +43,19 @@ describe('mergeRemoteBlock', () => {
   });
 
   it('returns null when incoming buffer is not valid JSON', () => {
-    cache.dataCache.set('char1', JSON.stringify({ chats: [], chatPage: 0 }));
+    cache.dataCache.set('char1', { chats: [], chatPage: 0 });
     expect(mergeRemoteBlock('char1', Buffer.from('invalid'))).toBeNull();
   });
 
   it('returns null when data has no chats array', () => {
-    cache.dataCache.set('char1', JSON.stringify({ noChats: true }));
+    cache.dataCache.set('char1', { noChats: true });
     const incoming = Buffer.from(JSON.stringify({ noChats: true }));
     expect(mergeRemoteBlock('char1', incoming)).toBeNull();
   });
 
   it('returns null when merge result equals incoming (no change)', () => {
     const data = { chats: [{ id: 'c1', name: 'Test', message: [{ role: 'user', data: 'hi' }] }], chatPage: 0 };
-    cache.dataCache.set('char1', JSON.stringify(data));
+    cache.dataCache.set('char1', data);
     const incoming = Buffer.from(JSON.stringify(data));
     expect(mergeRemoteBlock('char1', incoming)).toBeNull();
   });
@@ -85,7 +85,7 @@ describe('mergeRemoteBlock', () => {
       chatPage: 0,
     };
 
-    cache.dataCache.set('char1', JSON.stringify(server));
+    cache.dataCache.set('char1', server);
     const result = mergeRemoteBlock('char1', Buffer.from(JSON.stringify(incoming)));
 
     expect(result).not.toBeNull();
@@ -109,7 +109,7 @@ describe('mergeRemoteBlock', () => {
       chatPage: 0,
     };
 
-    cache.dataCache.set('char1', JSON.stringify(server));
+    cache.dataCache.set('char1', server);
     const result = mergeRemoteBlock('char1', Buffer.from(JSON.stringify(incoming)));
 
     expect(result).not.toBeNull();

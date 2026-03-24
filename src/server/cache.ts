@@ -16,18 +16,27 @@ export interface HashEntry {
 
 export const hashCache = new Map<string, HashEntry>();
 
-/** Data cache (LRU eviction, 용량 제한) */
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/**
+ * Data cache (LRU eviction, 용량 제한).
+ * 파싱된 JS 객체를 직접 저장. size 추정은 set 시 JSON.stringify length.
+ */
 class SizedCache {
   private maxSize: number;
-  private cache = new Map<string, { data: string; size: number }>();
+  private cache = new Map<string, { data: unknown; size: number }>();
   private currentSize = 0;
 
   constructor(maxSize: number) {
     this.maxSize = maxSize;
   }
 
-  set(name: string, jsonStr: string): void {
-    const size = Buffer.byteLength(jsonStr, 'utf-8');
+  set(name: string, value: unknown): void {
+    const size = typeof value === 'string'
+      ? Buffer.byteLength(value, 'utf-8')
+      : Buffer.byteLength(JSON.stringify(value), 'utf-8');
     if (this.cache.has(name)) {
       this.currentSize -= this.cache.get(name)!.size;
       this.cache.delete(name);
@@ -38,11 +47,11 @@ class SizedCache {
       this.cache.delete(oldest);
     }
     if (size > this.maxSize) return;
-    this.cache.set(name, { data: jsonStr, size });
+    this.cache.set(name, { data: value, size });
     this.currentSize += size;
   }
 
-  get(name: string): string | null {
+  get(name: string): unknown | null {
     const entry = this.cache.get(name);
     if (!entry) return null;
     // LRU: move to end
@@ -126,11 +135,9 @@ export function getManifest(): ManifestResponse {
     blocks.push({ name, type, hash });
   }
   let directory: string[] = [];
-  const rootJson = dataCache.get('root');
-  if (rootJson) {
-    try {
-      directory = JSON.parse(rootJson).__directory || [];
-    } catch {}
+  const rootData = dataCache.get('root');
+  if (isRecord(rootData) && Array.isArray(rootData.__directory)) {
+    directory = rootData.__directory;
   }
 
   return {

@@ -74,8 +74,9 @@ export function assembleDbBinary(
 
   // dataCache에서 일반 블록 (root, preset, modules, config 등)
   for (const [name, entry] of cacheModule.hashCache) {
-    const json = cacheModule.dataCache.get(name);
-    if (json === null) continue;
+    const data = cacheModule.dataCache.get(name);
+    if (data === null) continue;
+    const json = typeof data === 'string' ? data : JSON.stringify(data);
     parts.push(encodeBlock(entry.type, name, json));
   }
 

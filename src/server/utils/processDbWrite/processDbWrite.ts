@@ -11,6 +11,10 @@ import { notifySenderVersion } from '../notifySenderVersion';
 import { diffRootKeys } from './utils/diffRootKeys';
 import { diffDirectory } from './utils/diffDirectory';
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
 /** DB write 처리: 파싱 → 해시 비교 → broadcast */
 export function processDbWrite(buffer: Buffer, senderClientId: string | null): void {
   const parsed = parseRisuSaveBlocks(buffer);
@@ -26,7 +30,11 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
     // 첫 write: 캐시만 채움, broadcast 없음
     for (const [name, block] of blocks) {
       cache.hashCache.set(name, { type: block.type, hash: block.hash });
-      cache.dataCache.set(name, block.json);
+      try {
+        cache.dataCache.set(name, JSON.parse(block.json));
+      } catch {
+        cache.dataCache.set(name, block.json);
+      }
     }
     cache.setCacheInitialized(true);
     logger.info(`Cache initialized with ${blocks.size} blocks`);
@@ -45,15 +53,17 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
     } else if (cached.hash !== block.hash) {
       // ROOT 블록: 3분류 필터링
       if (block.type === BLOCK_TYPE.ROOT) {
-        const globalOldJson = cache.dataCache.get(name);
-        const globalDiff = diffRootKeys(globalOldJson, block.json);
+        const globalOldObj = cache.dataCache.get(name);
+        let newObj: unknown;
+        try { newObj = JSON.parse(block.json); } catch { newObj = null; }
+        const globalDiff = diffRootKeys(globalOldObj, newObj);
 
         // __directory 비교: 캐릭터 추가/삭제 감지.
         // - 추가: 글로벌 캐시 기준 (새 캐릭터 감지)
         // - 삭제: sender의 이전 __directory 기준 (false delete 방지)
         //   → sender가 아직 수신하지 못한 항목을 "삭제"로 오판하는 것을 차단
         const blockNames = new Set(blocks.keys());
-        const globalDirDiff = diffDirectory(globalOldJson, block.json, blockNames);
+        const globalDirDiff = diffDirectory(globalOldObj, newObj, blockNames);
         if (globalDirDiff) {
           for (const entry of globalDirDiff.added) {
             added.push({ name: entry, type: BLOCK_TYPE.WITHOUT_CHAT });
@@ -61,9 +71,9 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
         }
         // Stale 클라이언트의 __directory 기반 삭제를 차단:
         // 오래된 __directory로 최근 추가된 캐릭터를 "삭제됨"으로 오판하는 것을 방지
-        const senderOldRootJson = senderClientId ? clientRootCache.get(senderClientId) : undefined;
-        if (senderOldRootJson && isClientFresh(senderClientId)) {
-          const senderDirDiff = diffDirectory(senderOldRootJson, block.json, blockNames);
+        const senderOldRootObj = senderClientId ? clientRootCache.get(senderClientId) : undefined;
+        if (senderOldRootObj && isClientFresh(senderClientId)) {
+          const senderDirDiff = diffDirectory(senderOldRootObj, newObj, blockNames);
           if (senderDirDiff) {
             for (const entry of senderDirDiff.deleted) {
               deleted.push(entry);
@@ -74,19 +84,15 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
         }
 
         // ROOT 변경 상세 debug 로깅
-        if (globalDiff && globalDiff.syncedKeys.includes('pluginCustomStorage') && globalOldJson) {
-          try {
-            const oldRoot: { [k: string]: unknown } = JSON.parse(globalOldJson);
-            const newRoot: { [k: string]: unknown } = JSON.parse(block.json);
-            const oldPcs = (oldRoot.pluginCustomStorage || {}) as { [k: string]: unknown };
-            const newPcs = (newRoot.pluginCustomStorage || {}) as { [k: string]: unknown };
-            logger.diffObjects('pluginCustomStorage', oldPcs, newPcs);
-          } catch { /* parse failure */ }
+        if (globalDiff && globalDiff.syncedKeys.includes('pluginCustomStorage') && isRecord(globalOldObj) && isRecord(newObj)) {
+          const oldPcs = isRecord(globalOldObj.pluginCustomStorage) ? globalOldObj.pluginCustomStorage : {};
+          const newPcs = isRecord(newObj.pluginCustomStorage) ? newObj.pluginCustomStorage : {};
+          logger.diffObjects('pluginCustomStorage', oldPcs, newPcs);
         }
 
         // Per-client intersection diff: 글로벌 diff와 클라이언트 diff의 교집합만 broadcast.
-        const clientOldJson = senderClientId ? clientRootCache.get(senderClientId) : undefined;
-        const clientDiff = clientOldJson ? diffRootKeys(clientOldJson, block.json) : null;
+        const clientOldObj = senderClientId ? clientRootCache.get(senderClientId) : undefined;
+        const clientDiff = clientOldObj ? diffRootKeys(clientOldObj, newObj) : null;
 
         if (globalDiff && clientDiff) {
           const clientSyncedSet = new Set(clientDiff.syncedKeys);
@@ -121,9 +127,11 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
     }
     // 캐시는 항상 업데이트 (IGNORED-only 변경도 포함)
     cache.hashCache.set(name, { type: block.type, hash: block.hash });
-    cache.dataCache.set(name, block.json);
+    let parsed: unknown;
+    try { parsed = JSON.parse(block.json); } catch { parsed = block.json; }
+    cache.dataCache.set(name, parsed);
     if (block.type === BLOCK_TYPE.ROOT && senderClientId) {
-      clientRootCache.set(senderClientId, block.json);
+      clientRootCache.set(senderClientId, parsed);
     }
   }
 
@@ -165,8 +173,8 @@ function checkAndBroadcastPlainFetch(blocks: Map<string, { type: number; json: s
   const rootBlock = blocks.get('root');
   if (!rootBlock) return;
   try {
-    const root: Record<string, unknown> = JSON.parse(rootBlock.json);
-    if (root.usePlainFetch === true) {
+    const root: unknown = JSON.parse(rootBlock.json);
+    if (isRecord(root) && root.usePlainFetch === true) {
       broadcastPlainFetchWarning();
     }
   } catch { /* ignore */ }

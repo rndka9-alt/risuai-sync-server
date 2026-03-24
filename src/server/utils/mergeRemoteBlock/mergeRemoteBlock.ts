@@ -20,19 +20,12 @@ export function mergeRemoteBlock(
   incomingBuffer: Buffer,
 ): Buffer | null {
   try {
-    const cachedJson = cache.dataCache.get(charId);
-    if (!cachedJson) return null;
+    const serverData = cache.dataCache.get(charId);
+    if (!serverData) return null;
 
     const incomingJson = incomingBuffer.toString('utf-8');
 
-    let serverData: unknown;
     let incomingData: unknown;
-    try {
-      serverData = JSON.parse(cachedJson);
-    } catch {
-      logger.warn('Merge: cached data is not valid JSON', { charId });
-      return null;
-    }
     try {
       incomingData = JSON.parse(incomingJson);
     } catch {

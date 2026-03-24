@@ -31,15 +31,16 @@ import { hashRequestBody } from './utils/hashRequestBody';
 import { pushLlmEvent } from './utils/monitorPush';
 import { extractResponseMeta } from './llm-response-format/extractResponseMeta';
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
 function getUsePlainFetchFromDataCache(): boolean | null {
   const rootData = cache.dataCache.get('root');
-  if (!rootData) return null;
-  try {
-    const parsed: Record<string, unknown> = JSON.parse(rootData);
-    if (typeof parsed.usePlainFetch === 'boolean') {
-      return parsed.usePlainFetch;
-    }
-  } catch { /* ignore */ }
+  if (!isRecord(rootData)) return null;
+  if (typeof rootData.usePlainFetch === 'boolean') {
+    return rootData.usePlainFetch;
+  }
   return null;
 }
 
@@ -612,19 +613,20 @@ function handleAuthenticatedSyncRoute(
       sendJson(res, 400, { error: 'missing name parameter' });
       return;
     }
-    const data = cache.dataCache.get(name);
-    if (data === null) {
+    const rawData = cache.dataCache.get(name);
+    if (rawData === null) {
       sendJson(res, 404, { error: 'block not found in cache' });
       return;
     }
+    const jsonStr = typeof rawData === 'string' ? rawData : JSON.stringify(rawData);
     const hashEntry = cache.hashCache.get(name);
     const resHeaders: Record<string, string | number> = {
       'content-type': 'application/json; charset=utf-8',
-      'content-length': Buffer.byteLength(data),
+      'content-length': Buffer.byteLength(jsonStr),
     };
     if (hashEntry) resHeaders['x-block-hash'] = hashEntry.hash;
     res.writeHead(200, resHeaders);
-    res.end(data);
+    res.end(jsonStr);
     return;
   }
 

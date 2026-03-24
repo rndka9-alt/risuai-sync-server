@@ -15,17 +15,17 @@ export function processRemoteBlockWrite(
   const hash = crypto.createHash('sha256').update(buffer).digest('hex');
   const jsonStr = buffer.toString('utf-8');
 
+  let parsed: unknown;
   try {
-    JSON.parse(jsonStr);
+    parsed = JSON.parse(jsonStr);
   } catch {
     logger.error('Remote block is not valid JSON, skipping', { charId });
     return;
   }
 
   if (!cache.cacheInitialized) {
-    // database.bin 이전에 도착한 경우: 캐시만 채움
     cache.hashCache.set(charId, { type: BLOCK_TYPE.WITH_CHAT, hash });
-    cache.dataCache.set(charId, jsonStr);
+    cache.dataCache.set(charId, parsed);
     logger.info('Remote block cached (pre-init)', { charId });
     return;
   }
@@ -36,7 +36,7 @@ export function processRemoteBlockWrite(
   }
 
   cache.hashCache.set(charId, { type: BLOCK_TYPE.WITH_CHAT, hash });
-  cache.dataCache.set(charId, jsonStr);
+  cache.dataCache.set(charId, parsed);
 
   const blockChange: BlockChange = { name: charId, type: BLOCK_TYPE.WITH_CHAT };
   const isNew = !cached;
