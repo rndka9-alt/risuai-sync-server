@@ -1,4 +1,4 @@
-import { CLIENT_ID, CLIENT_ID_HEADER, FILE_PATH_HEADER, PROXY2_TARGET_HEADER, RISU_AUTH_HEADER } from '../config';
+import { CLIENT_ID, CLIENT_ID_HEADER, FILE_PATH_HEADER, PROXY2_TARGET_HEADER, REQUEST_ID_HEADER, RISU_AUTH_HEADER } from '../config';
 import { extractRemoteCharId, isUnchangedRemoteBlock, ensureBufferedBody } from '../dedup';
 import { hexDecode } from '../dedup/utils/hexDecode';
 import { capture } from '../auth';
@@ -19,7 +19,19 @@ const DB_BIN_HEX = Array.from(new TextEncoder().encode('database/database.bin'))
 /** fetch monkey-patch */
 const originalFetch = window.fetch;
 
+/** 클라이언트 rid 생성: 체인 전체에서 동일 요청 추적용 */
+function generateRid(): string {
+  const ts = Date.now().toString(36);
+  const rand = Math.random().toString(36).substring(2, 8);
+  return `${ts}-${rand}`;
+}
+
 const patchedFetch: typeof fetch = function (input, init) {
+  // 모든 요청에 x-request-id 주입 (없을 때만)
+  if (init?.headers && !extractHeader(init.headers, REQUEST_ID_HEADER)) {
+    setHeader(init.headers, REQUEST_ID_HEADER, generateRid());
+  }
+
   // risu-auth 캡처 (WS 인증용)
   const risuAuth = extractHeader(init?.headers, RISU_AUTH_HEADER);
   if (risuAuth) {

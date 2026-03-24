@@ -11,7 +11,7 @@ declare var __SYNC_CONFIG__: SyncConfig;
 export const DB_PATH: string = __SYNC_CONFIG__.DB_PATH;
 export const CLIENT_ID: string = Math.random().toString(36).substring(2) + Date.now().toString(36);
 
-export { CLIENT_ID_HEADER, FILE_PATH_HEADER, PROXY2_TARGET_HEADER, RISU_AUTH_HEADER } from '../shared/headers';
+export { CLIENT_ID_HEADER, FILE_PATH_HEADER, PROXY2_TARGET_HEADER, REQUEST_ID_HEADER, RISU_AUTH_HEADER } from '../shared/headers';
 
 import { getToken } from './auth';
 import { CLIENT_ID_HEADER, RISU_AUTH_HEADER } from '../shared/headers';
