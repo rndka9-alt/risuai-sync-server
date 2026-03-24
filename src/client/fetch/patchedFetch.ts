@@ -96,9 +96,15 @@ const patchedFetch: typeof fetch = function (input, init) {
         const buffered = await ensureBufferedBody(init);
         const body = buffered.body;
         if (body instanceof Uint8Array) {
-          const delta = computeDelta(body);
-          if (delta) {
-            const resp = await sendDelta(delta, buffered.headers);
+          const result = computeDelta(body);
+          if (result === 'no_changes') {
+            return new Response(JSON.stringify({ success: true }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          if (result !== 'no_cache') {
+            const resp = await sendDelta(result, buffered.headers);
             if (resp) return resp;
           }
         }

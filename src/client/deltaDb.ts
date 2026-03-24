@@ -164,18 +164,22 @@ export function warmCache(body: Uint8Array): void {
   }
 }
 
+export type ComputeDeltaResult =
+  | 'no_cache'      // 캐시 없음 또는 파싱 실패 → full write 필요
+  | 'no_changes'    // 변경 없음 → 전송 불필요
+  | DeltaPayload;   // 변경분 → delta 전송
+
 /**
  * database.bin body에서 변경분만 추출.
- * null: delta 불가 (캐시 없음, 파싱 실패, 변경 없음) → 전체 전송.
  */
-export function computeDelta(body: Uint8Array): DeltaPayload | null {
+export function computeDelta(body: Uint8Array): ComputeDeltaResult {
   if (blockCache.size === 0) {
     warmCache(body);
-    return null;
+    return 'no_cache';
   }
 
   const decoded = decodeBlocks(body);
-  if (!decoded) return null;
+  if (!decoded) return 'no_cache';
 
   const deltas: Record<string, BlockDelta> = {};
   let hasChanges = false;
@@ -199,7 +203,7 @@ export function computeDelta(body: Uint8Array): DeltaPayload | null {
     blockCache.set(block.name, { type: block.type, obj: block.obj });
   }
 
-  if (!hasChanges) return null;
+  if (!hasChanges) return 'no_changes';
 
   return { blocks: deltas };
 }

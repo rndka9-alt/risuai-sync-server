@@ -47,18 +47,19 @@ describe('computeDelta (database.bin)', () => {
       buildBlock(1, 'root', JSON.stringify({ temperature: 0.7 })),
       buildBlock(0, 'config', JSON.stringify({ version: 1 })),
     ]);
-    const delta = computeDelta(save);
-    expect(delta).not.toBeNull();
-    expect(delta!.blocks['config'].patch).toEqual({ version: 1 });
-    expect(delta!.blocks['root']).toBeUndefined(); // 변경 없음
+    const result = computeDelta(save);
+    expect(typeof result).not.toBe('string');
+    if (typeof result === 'string') return;
+    expect(result.blocks['config'].patch).toEqual({ version: 1 });
+    expect(result.blocks['root']).toBeUndefined(); // 변경 없음
   });
 
-  it('변경 없으면 null 반환', () => {
+  it('변경 없으면 no_changes 반환', () => {
     const save = buildRisuSave([
       buildBlock(1, 'root', JSON.stringify({ temperature: 0.7 })),
     ]);
     computeDelta(save);
-    expect(computeDelta(save)).toBeNull();
+    expect(computeDelta(save)).toBe('no_changes');
   });
 
   it('변경된 키만 delta로 추출', () => {
@@ -70,9 +71,10 @@ describe('computeDelta (database.bin)', () => {
     const save2 = buildRisuSave([
       buildBlock(1, 'root', JSON.stringify({ temperature: 0.9, maxContext: 4096 })),
     ]);
-    const delta = computeDelta(save2);
-    expect(delta).not.toBeNull();
-    expect(delta!.blocks['root'].patch).toEqual({ temperature: 0.9 });
+    const result = computeDelta(save2);
+    expect(typeof result).not.toBe('string');
+    if (typeof result === 'string') return;
+    expect(result.blocks['root'].patch).toEqual({ temperature: 0.9 });
   });
 
   it('삭제된 키는 null로 표시', () => {
@@ -84,8 +86,10 @@ describe('computeDelta (database.bin)', () => {
     const save2 = buildRisuSave([
       buildBlock(1, 'root', JSON.stringify({ a: 1 })),
     ]);
-    const delta = computeDelta(save2);
-    expect(delta!.blocks['root'].patch).toEqual({ b: null });
+    const result = computeDelta(save2);
+    expect(typeof result).not.toBe('string');
+    if (typeof result === 'string') return;
+    expect(result.blocks['root'].patch).toEqual({ b: null });
   });
 });
 
