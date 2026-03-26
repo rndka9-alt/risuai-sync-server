@@ -22,6 +22,7 @@ import { sendJson } from './utils/sendJson';
 import { notifyWriteFailed } from './utils/notifyWriteFailed';
 import { sendUpstreamWithRetry } from './utils/sendUpstreamWithRetry';
 import { handleDeltaWrite, getCachedDbBinary, setCachedDbBinary } from './utils/deltaDbWrite';
+import { handleBatchWrite } from './utils/batchWrite';
 import { stripHeavyFields } from './utils/stripHeavyFields';
 import { initAuth, issueInternalToken, isAuthReady } from './utils/risuAuth';
 import { proxyRequest } from './utils/proxyRequest';
@@ -819,6 +820,32 @@ const server = http.createServer((req, res) => {
           return;
         }
         handleDeltaWrite(req, res, sync.processDbWrite, remoteWriteOps, notifyWriteFailed);
+      }).catch(() => {
+        if (!res.headersSent) sendJson(res, 502, { error: 'auth verification failed' });
+      });
+      return;
+    }
+
+    // /sync/batch-write — 에셋 등 다수 파일을 한 요청으로 묶어 upstream 전달
+    if (req.method === 'POST' && url.pathname === '/sync/batch-write') {
+      const httpClientId = typeof req.headers[config.CLIENT_ID_HEADER] === 'string'
+        ? req.headers[config.CLIENT_ID_HEADER]
+        : null;
+      if (isTrustedClient(httpClientId)) {
+        handleBatchWrite(req, res);
+        return;
+      }
+      const risuAuth = req.headers[config.RISU_AUTH_HEADER];
+      if (typeof risuAuth !== 'string') {
+        sendJson(res, 401, { error: 'unauthorized' });
+        return;
+      }
+      verifyRisuAuth(risuAuth).then((valid) => {
+        if (!valid) {
+          sendJson(res, 401, { error: 'unauthorized' });
+          return;
+        }
+        handleBatchWrite(req, res);
       }).catch(() => {
         if (!res.headersSent) sendJson(res, 502, { error: 'auth verification failed' });
       });

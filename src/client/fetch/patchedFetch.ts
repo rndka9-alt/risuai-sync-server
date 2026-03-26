@@ -11,6 +11,7 @@ import { buildProxy2Request } from './utils/redirectToProxy2';
 import { getProxyUrls } from './utils/getProxyUrls';
 import { showSyncFallbackNotice } from '../notification/showSyncFallbackNotice';
 import { computeDelta, computeRemoteDelta, warmCache, warmRemoteCache } from '../deltaDb';
+import { enqueueBatchWrite } from './utils/batchWriteBuffer';
 
 /** hex-encoded "database/database.bin" */
 const DB_BIN_HEX = Array.from(new TextEncoder().encode('database/database.bin'))
@@ -155,6 +156,18 @@ const patchedFetch: typeof fetch = function (input, init) {
             const resp = await sendDelta(delta, buffered.headers);
             if (resp) return resp;
           }
+        }
+        return fetchWriteWithRetry(input, buffered);
+      })();
+    }
+
+    // 에셋 등 diff 불필요 파일 → 배치 버퍼로 모아서 한 번에 전송
+    if (filePath) {
+      return (async () => {
+        const buffered = await ensureBufferedBody(init);
+        const body = buffered.body;
+        if (body instanceof Uint8Array) {
+          return enqueueBatchWrite(filePath, body, buffered);
         }
         return fetchWriteWithRetry(input, buffered);
       })();

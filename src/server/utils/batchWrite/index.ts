@@ -1,0 +1,1 @@
+export { handleBatchWrite } from './batchWrite';
