@@ -18,6 +18,11 @@ const DB_BIN_HEX = Array.from(new TextEncoder().encode('database/database.bin'))
   .map((b) => b.toString(16).padStart(2, '0'))
   .join('');
 
+/** 백업 디바운스: 마지막 요청 후 1시간 뒤 한 번만 실제 전송 */
+const BACKUP_DEBOUNCE_MS = 60 * 60 * 1000;
+let backupTimer: ReturnType<typeof setTimeout> | null = null;
+let latestBackupAuth: string = '';
+
 /** fetch monkey-patch */
 const originalFetch = window.fetch;
 
@@ -96,13 +101,18 @@ const patchedFetch: typeof fetch = function (input, init) {
             headers: { 'content-type': 'application/json' },
           }));
         }
-        // dbbackup → sync 서버가 cached binary로 대신 write (6.6MB 업로드 제거)
+        // dbbackup → 1시간 디바운스 후 서버 캐시로 백업 (database.bin은 이미 저장됨)
         if (decoded.includes('dbbackup-')) {
-          return (async () => {
-            const resp = await sendBackupRequest(init.headers);
-            if (resp) return resp;
-            return fetchWriteWithRetry(input, init);
-          })();
+          latestBackupAuth = extractHeader(init.headers, RISU_AUTH_HEADER) ?? '';
+          if (backupTimer) clearTimeout(backupTimer);
+          backupTimer = setTimeout(() => {
+            backupTimer = null;
+            sendBackupRequest({ [RISU_AUTH_HEADER]: latestBackupAuth });
+          }, BACKUP_DEBOUNCE_MS);
+          return Promise.resolve(new Response(JSON.stringify({ success: true }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }));
         }
       } catch {
         // hex 디코딩 실패 시 정상 전달
