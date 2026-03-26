@@ -22,6 +22,7 @@ import { sendJson } from './utils/sendJson';
 import { notifyWriteFailed } from './utils/notifyWriteFailed';
 import { sendUpstreamWithRetry } from './utils/sendUpstreamWithRetry';
 import { handleDeltaWrite, getCachedDbBinary, setCachedDbBinary } from './utils/deltaDbWrite';
+import { stripHeavyFields } from './utils/stripHeavyFields';
 import { initAuth, issueInternalToken, isAuthReady } from './utils/risuAuth';
 import { proxyRequest } from './utils/proxyRequest';
 import { broadcastPlainFetchWarning } from './utils/broadcast';
@@ -677,6 +678,7 @@ function handleAuthenticatedSyncRoute(
     return;
   }
 
+
   const streamMatch = url.pathname.match(/^\/sync\/stream\/([^/]+)$/);
   if (req.method === 'GET' && streamMatch) {
     if (!streamBuffer.subscribe(streamMatch[1], res)) {
@@ -1099,9 +1101,15 @@ const server = http.createServer((req, res) => {
                     broadcastPlainFetchWarning();
                   }
 
-                  const modifiedJson = injectSyncPlugin(rootBlock.json);
-                  if (modifiedJson !== rootBlock.json) {
-                    const reassembled = reassembleRisuSave(originalBuf, modifiedJson);
+                  // Phase 1: ROOT.modules 중복 제거 (MODULES 블록에 동일 데이터 존재)
+                  const strippedJson = stripHeavyFields(rootBlock.json);
+
+                  // Phase 2: sync 플러그인 주입
+                  const finalJson = injectSyncPlugin(strippedJson);
+
+                  // Phase 3: 바이너리 재조립 (변경이 있을 때만)
+                  if (finalJson !== rootBlock.json) {
+                    const reassembled = reassembleRisuSave(originalBuf, finalJson);
                     if (reassembled) responseBuf = reassembled;
                   }
                 }

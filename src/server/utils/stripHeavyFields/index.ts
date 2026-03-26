@@ -1,0 +1,1 @@
+export { stripHeavyFields } from './stripHeavyFields';
