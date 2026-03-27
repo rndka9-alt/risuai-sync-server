@@ -71,8 +71,8 @@ export function mergeChats(
       // 매칭됨: 메시지 merge
       matchedServerIndices.add(serverIdx);
       const mergedMessages = mergeMessages(serverChats[serverIdx].message, inChat.message);
-      // incoming의 메타데이터를 base로 사용하되, 메시지만 merge 결과로 교체
-      result.push({ ...inChat, message: mergedMessages });
+      // server를 base로 깔아 note 등 기존 필드를 보존하고, incoming으로 덮어써서 유저 편집 반영
+      result.push({ ...serverChats[serverIdx], ...inChat, message: mergedMessages });
     } else {
       // incoming에만 있는 chat: 그대로 추가
       result.push({ ...inChat });

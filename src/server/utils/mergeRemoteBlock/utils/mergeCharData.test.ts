@@ -47,6 +47,24 @@ describe('mergeCharData', () => {
     expect(result.chatPage).toBe(0);
   });
 
+  it('preserves server-only fields when incoming is missing them', () => {
+    const server = charData([chat('c1', [msg('user', 'hi', 'a')])], { desc: 'server desc', license: 'MIT' });
+    const incoming = charData([chat('c1', [msg('user', 'hi', 'a')])]);
+
+    const result = mergeCharData(server, incoming);
+    expect(result.desc).toBe('server desc');
+    expect(result.license).toBe('MIT');
+  });
+
+  it('incoming overrides server fields when both exist', () => {
+    const server = charData([chat('c1', [msg('user', 'hi', 'a')])], { desc: 'old', license: 'MIT' });
+    const incoming = charData([chat('c1', [msg('user', 'hi', 'a')])], { desc: 'new' });
+
+    const result = mergeCharData(server, incoming);
+    expect(result.desc).toBe('new');
+    expect(result.license).toBe('MIT');
+  });
+
   it('preserves chatPage when valid', () => {
     const server = charData([
       chat('c1', [msg('user', 'hi')]),

@@ -99,4 +99,18 @@ describe('mergeChats', () => {
     const result = mergeChats(server, incoming);
     expect(result[0].name).toBe('New Name');
   });
+
+  it('preserves server-only chat fields (e.g. note) when incoming is missing them', () => {
+    const serverChat: MergeChat = { id: 'c1', name: 'Chat 1', message: [msg('user', 'hi', 'a')], note: 'important' };
+    const incomingChat: MergeChat = { id: 'c1', name: 'Chat 1', message: [msg('user', 'hi', 'a')] };
+    const result = mergeChats([serverChat], [incomingChat]);
+    expect(result[0].note).toBe('important');
+  });
+
+  it('incoming chat fields override server when both exist', () => {
+    const serverChat: MergeChat = { id: 'c1', name: 'Chat 1', message: [msg('user', 'hi', 'a')], note: 'old note' };
+    const incomingChat: MergeChat = { id: 'c1', name: 'Chat 1', message: [msg('user', 'hi', 'a')], note: 'new note' };
+    const result = mergeChats([serverChat], [incomingChat]);
+    expect(result[0].note).toBe('new note');
+  });
 });
