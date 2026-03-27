@@ -1,52 +1,166 @@
+import db from './db';
 import * as config from './config';
 import type { BlockType } from '../shared/blockTypes';
+import { isBlockType } from '../shared/blockTypes';
 import type { BlockChange, ChangeLogEntry, ChangesResponse, ManifestResponse } from '../shared/types';
 
-/**
- * 블록 해시 캐시 — 블록 내용 변경 감지용.
- * 바이너리에 실제 데이터가 포함된 블록만 등록됨.
- * RisuAI incremental save 특성상 대부분 root 블록만 포함되며,
- * 캐릭터 블록은 해당 캐릭터 수정 시에만 간헐적으로 등장.
- * 캐릭터 목록(추가/삭제) 감지에는 사용 불가 → diffDirectory() 참조.
- */
 export interface HashEntry {
   type: BlockType;
   hash: string;
 }
 
-export const hashCache = new Map<string, HashEntry>();
+// ─── Type guards ────────────────────────────────────────
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-/**
- * Data cache — 용량 제한 없는 단순 캐시.
- * 항목 수가 캐릭터 수 + 고정 블록(~5개)으로 자연 제한되므로 eviction 불필요.
- */
-class DataCache {
-  private cache = new Map<string, unknown>();
+// getBlock 쿼리 결과: name 없이 type, hash, data만 반환
+interface BlockGetResult {
+  type: number;
+  hash: string;
+  data: string | null;
+}
 
-  set(name: string, value: unknown): void {
-    this.cache.set(name, value);
+function isBlockGetResult(v: unknown): v is BlockGetResult {
+  return isRecord(v) && typeof v.type === 'number' && typeof v.hash === 'string';
+}
+
+// allBlockHashes 쿼리 결과: name, type, hash 반환
+interface BlockListResult {
+  name: string;
+  type: number;
+  hash: string;
+}
+
+function isBlockListResult(v: unknown): v is BlockListResult {
+  return isRecord(v)
+    && typeof v.name === 'string'
+    && typeof v.type === 'number'
+    && typeof v.hash === 'string';
+}
+
+interface ChangelogRow {
+  version: number;
+  timestamp: number;
+  sender_client_id: string | null;
+  changed: string;
+  deleted: string;
+}
+
+function isChangelogRow(v: unknown): v is ChangelogRow {
+  return isRecord(v)
+    && typeof v.version === 'number'
+    && typeof v.timestamp === 'number'
+    && typeof v.changed === 'string'
+    && typeof v.deleted === 'string';
+}
+
+interface CountRow { count: number }
+function isCountRow(v: unknown): v is CountRow {
+  return isRecord(v) && typeof v.count === 'number';
+}
+
+interface VersionRow { version: number }
+function isVersionRow(v: unknown): v is VersionRow {
+  return isRecord(v) && typeof v.version === 'number';
+}
+
+// ─── Prepared statements ────────────────────────────────
+
+const stmt = {
+  getBlock: db.prepare('SELECT type, hash, data FROM blocks WHERE name = ?'),
+  upsertHash: db.prepare(
+    'INSERT INTO blocks (name, type, hash) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET type = excluded.type, hash = excluded.hash',
+  ),
+  upsertData: db.prepare(
+    'INSERT INTO blocks (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data = excluded.data',
+  ),
+  deleteBlock: db.prepare('DELETE FROM blocks WHERE name = ?'),
+  hasBlock: db.prepare('SELECT 1 FROM blocks WHERE name = ?'),
+  countBlocks: db.prepare('SELECT COUNT(*) as count FROM blocks'),
+  allBlockHashes: db.prepare('SELECT name, type, hash FROM blocks'),
+
+  insertChange: db.prepare(
+    'INSERT INTO changelog (version, timestamp, sender_client_id, changed, deleted) VALUES (?, ?, ?, ?, ?)',
+  ),
+  changesSince: db.prepare('SELECT * FROM changelog WHERE version > ? ORDER BY version'),
+  oldestVersion: db.prepare('SELECT version FROM changelog ORDER BY version ASC LIMIT 1'),
+  changelogCount: db.prepare('SELECT COUNT(*) as count FROM changelog'),
+  trimChangelog: db.prepare(
+    'DELETE FROM changelog WHERE version NOT IN (SELECT version FROM changelog ORDER BY version DESC LIMIT ?)',
+  ),
+};
+
+// ─── Hash cache (SQLite blocks 테이블) ──────────────────
+
+class SqliteHashCache {
+  get(name: string): HashEntry | undefined {
+    const row = stmt.getBlock.get(name);
+    if (!isBlockGetResult(row) || !isBlockType(row.type)) return undefined;
+    return { type: row.type, hash: row.hash };
   }
 
-  get(name: string): unknown | null {
-    return this.cache.get(name) ?? null;
+  set(name: string, entry: HashEntry): this {
+    stmt.upsertHash.run(name, entry.type, entry.hash);
+    return this;
   }
 
-  delete(name: string): void {
-    this.cache.delete(name);
+  delete(name: string): boolean {
+    return stmt.deleteBlock.run(name).changes > 0;
+  }
+
+  has(name: string): boolean {
+    return stmt.hasBlock.get(name) !== undefined;
   }
 
   get size(): number {
-    return this.cache.size;
+    const row = stmt.countBlocks.get();
+    return isCountRow(row) ? row.count : 0;
+  }
+
+  *[Symbol.iterator](): IterableIterator<[string, HashEntry]> {
+    for (const row of stmt.allBlockHashes.iterate()) {
+      if (isBlockListResult(row) && isBlockType(row.type)) {
+        yield [row.name, { type: row.type, hash: row.hash }];
+      }
+    }
   }
 }
 
-export const dataCache = new DataCache();
+export const hashCache = new SqliteHashCache();
 
-/** 내부 상태 */
+// ─── Data cache (SQLite blocks 테이블, data 컬럼) ───────
+
+class SqliteDataCache {
+  set(name: string, value: unknown): void {
+    stmt.upsertData.run(name, JSON.stringify(value));
+  }
+
+  get(name: string): unknown | null {
+    const row = stmt.getBlock.get(name);
+    if (!isBlockGetResult(row) || row.data === null) return null;
+    try {
+      return JSON.parse(row.data);
+    } catch {
+      return row.data;
+    }
+  }
+
+  delete(name: string): void {
+    stmt.deleteBlock.run(name);
+  }
+
+  get size(): number {
+    const row = stmt.countBlocks.get();
+    return isCountRow(row) ? row.count : 0;
+  }
+}
+
+export const dataCache = new SqliteDataCache();
+
+// ─── Scalar state (서버 인스턴스별 고유, 매 시작마다 초기화) ─
+
 export const epoch = Date.now();
 export let cacheInitialized = false;
 export let currentVersion = 0;
@@ -55,25 +169,27 @@ export function setCacheInitialized(v: boolean): void {
   cacheInitialized = v;
 }
 
-const changeLog: ChangeLogEntry[] = [];
+// ─── Changelog (SQLite changelog 테이블) ────────────────
 
-/** 변경 로그 */
 export function addChangeLogEntry(
   changed: BlockChange[],
   deleted: string[],
   senderClientId?: string | null,
 ): number {
   currentVersion++;
-  changeLog.push({
-    version: currentVersion,
-    timestamp: Date.now(),
-    changed,
-    deleted,
-    senderClientId: senderClientId || null,
-  });
-  while (changeLog.length > config.MAX_LOG_ENTRIES) {
-    changeLog.shift();
+  stmt.insertChange.run(
+    currentVersion,
+    Date.now(),
+    senderClientId || null,
+    JSON.stringify(changed),
+    JSON.stringify(deleted),
+  );
+
+  const countRow = stmt.changelogCount.get();
+  if (isCountRow(countRow) && countRow.count > config.MAX_LOG_ENTRIES) {
+    stmt.trimChangelog.run(config.MAX_LOG_ENTRIES);
   }
+
   return currentVersion;
 }
 
@@ -82,24 +198,32 @@ interface ChangesResult {
   data: ChangesResponse | { error: string; version: number; epoch: number };
 }
 
-/**
- * since 이후의 변경분을 반환.
- * excludeClientId가 주어지면 해당 클라이언트가 보낸 변경분은 제외.
- */
 export function getChangesSince(since: number, excludeClientId?: string | null): ChangesResult {
-  if (changeLog.length === 0 || since >= currentVersion) {
+  const oldestRow = stmt.oldestVersion.get();
+  if (!isVersionRow(oldestRow) || since >= currentVersion) {
     return { status: 200, data: { epoch, version: currentVersion, changes: [] } };
   }
-  const oldestVersion = changeLog[0].version;
-  if (since > 0 && since < oldestVersion) {
+  if (since > 0 && since < oldestRow.version) {
     return { status: 410, data: { error: 'version_expired', version: currentVersion, epoch } };
   }
-  let changes = changeLog.filter((entry) => entry.version > since);
+  let changes: ChangeLogEntry[] = [];
+  for (const row of stmt.changesSince.iterate(since)) {
+    if (!isChangelogRow(row)) continue;
+    changes.push({
+      version: row.version,
+      timestamp: row.timestamp,
+      senderClientId: row.sender_client_id,
+      changed: JSON.parse(row.changed),
+      deleted: JSON.parse(row.deleted),
+    });
+  }
   if (excludeClientId) {
     changes = changes.filter((entry) => entry.senderClientId !== excludeClientId);
   }
   return { status: 200, data: { epoch, version: currentVersion, changes } };
 }
+
+// ─── Manifest ───────────────────────────────────────────
 
 export function getManifest(): ManifestResponse {
   const blocks: ManifestResponse['blocks'] = [];
