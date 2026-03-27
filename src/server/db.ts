@@ -20,6 +20,7 @@ const db = new Database(DB_FILE);
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
 db.pragma('temp_store = MEMORY');
+db.pragma('auto_vacuum = INCREMENTAL');
 
 db.exec(`
   CREATE TABLE blocks (

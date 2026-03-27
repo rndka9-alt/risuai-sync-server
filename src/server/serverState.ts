@@ -159,6 +159,7 @@ const clientCacheCleanupTimer = setInterval(() => {
   stmt.cleanExpiredRootCache.run(now - CLIENT_CACHE_TTL_MS);
   stmt.cleanExpiredTrusted.run(now - TRUST_GRACE_PERIOD_MS);
   stmt.removeEmptyRows.run();
+  db.pragma('incremental_vacuum(1000)');
 }, 60_000);
 clientCacheCleanupTimer.unref();
 
