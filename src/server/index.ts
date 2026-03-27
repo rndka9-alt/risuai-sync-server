@@ -14,14 +14,16 @@ import * as streamBuffer from './stream-buffer';
 import { clients, aliveState, freshClients } from './serverState';
 import { isTrustedClient } from './utils/isTrustedClient';
 import { markClientTrusted } from './utils/markClientTrusted';
-import { parseRisuSaveBlocks } from './parser';
-import { reassembleRisuSave } from './utils/reassembleRisuSave';
 import { injectSyncPlugin } from './utils/injectSyncPlugin';
 import { SYNC_MARKER_KEY } from '../shared/syncMarker';
 import { sendJson } from './utils/sendJson';
 import { notifyWriteFailed } from './utils/notifyWriteFailed';
 import { sendUpstreamWithRetry } from './utils/sendUpstreamWithRetry';
-import { handleDeltaWrite, getCachedDbBinary, setCachedDbBinary } from './utils/deltaDbWrite';
+import { handleDeltaWrite, getCachedRemoteBlocks, setCachedRemoteBlocks, updateRemoteBlocksFromBinary } from './utils/deltaDbWrite';
+import { assembleDbBinary } from './utils/deltaDbWrite/utils/assembleDbBinary';
+import { streamParseRisuSave, encodeRawBlock } from './utils/streamParseRisuSave';
+import { BLOCK_TYPE } from '../shared/blockTypes';
+import zlib from 'zlib';
 import { handleBatchWrite } from './utils/batchWrite';
 import { stripHeavyFields } from './utils/stripHeavyFields';
 import { initAuth, issueInternalToken, isAuthReady } from './utils/risuAuth';
@@ -188,7 +190,7 @@ function proxyDbWrite(req: http.IncomingMessage, res: http.ServerResponse): void
         proxyRes.pipe(res);
 
         if (proxyRes.statusCode! >= 200 && proxyRes.statusCode! < 300) {
-          setCachedDbBinary(buffer);
+          updateRemoteBlocksFromBinary(buffer);
           setImmediate(() => sync.enqueueDbWrite(seq, buffer, senderClientId));
         } else {
           sync.skipDbWrite(seq);
@@ -701,6 +703,90 @@ function handleAuthenticatedSyncRoute(
   }
 }
 
+// ─── Streaming database.bin helpers ─────────────────────
+
+const RISUSAVE_MAGIC = Buffer.from('RISUSAVE\0', 'utf-8');
+
+/** RisuSave 블록 하나를 HTTP response에 기록 */
+function writeBlock(
+  res: http.ServerResponse,
+  type: number,
+  compression: number,
+  name: string,
+  data: Buffer,
+): void {
+  const nameBytes = Buffer.from(name, 'utf-8');
+  const header = Buffer.alloc(3 + nameBytes.length + 4);
+  header[0] = type;
+  header[1] = compression;
+  header[2] = nameBytes.length;
+  nameBytes.copy(header, 3);
+  header.writeUInt32LE(data.length, 3 + nameBytes.length);
+  res.write(header);
+  res.write(data);
+}
+
+/**
+ * database.bin 스트리밍 read proxy.
+ * 전체 바이너리를 메모리에 올리지 않고 블록 단위로 파싱하여 전달.
+ * ROOT 블록만 버퍼링하여 플러그인 주입 후 전송.
+ */
+async function streamDbBinaryRead(
+  upstream: http.IncomingMessage,
+  clientRes: http.ServerResponse,
+): Promise<void> {
+  const remoteBlocks: Buffer[] = [];
+
+  const headers = { ...upstream.headers };
+  delete headers['content-length'];
+  delete headers['content-encoding'];
+  delete headers['transfer-encoding'];
+  clientRes.writeHead(200, headers);
+  clientRes.write(RISUSAVE_MAGIC);
+
+  for await (const block of streamParseRisuSave(upstream)) {
+    if (block.type === BLOCK_TYPE.ROOT) {
+      const json = block.data.toString('utf-8');
+      try {
+        const root: Record<string, unknown> = JSON.parse(json);
+        if (root.usePlainFetch === true) broadcastPlainFetchWarning();
+      } catch { /* ignore */ }
+
+      const strippedJson = stripHeavyFields(json);
+      const finalJson = injectSyncPlugin(strippedJson);
+
+      let newData = Buffer.from(finalJson, 'utf-8');
+      if (block.compression === 1) {
+        newData = zlib.gzipSync(newData);
+      }
+      writeBlock(clientRes, block.type, block.compression, block.name, newData);
+    } else {
+      writeBlock(clientRes, block.type, block.compression, block.name, block.rawData);
+    }
+
+    if (block.type === BLOCK_TYPE.REMOTE) {
+      remoteBlocks.push(encodeRawBlock(block));
+    }
+  }
+
+  clientRes.end();
+  setCachedRemoteBlocks(remoteBlocks);
+}
+
+/** Web ReadableStream → AsyncIterable 변환 (proactive fetch용) */
+async function* toAsyncIterable(stream: ReadableStream<Uint8Array>): AsyncGenerator<Uint8Array> {
+  const reader = stream.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      yield value;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 /** HTTP 서버 */
 const server = http.createServer((req, res) => {
   const reqStart = performance.now();
@@ -852,12 +938,16 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    // /sync/backup — cached database.bin으로 dbbackup write (클라이언트 6.6MB 업로드 제거)
+    // /sync/backup — cache에서 database.bin 재조립 후 dbbackup write
     if (req.method === 'POST' && url.pathname === '/sync/backup') {
       const handleBackup = () => {
-        const cached = getCachedDbBinary();
-        if (!cached) {
+        if (!cache.cacheInitialized) {
           sendJson(res, 409, { error: 'no_cache' });
+          return;
+        }
+        const cached = assembleDbBinary(cache, getCachedRemoteBlocks());
+        if (!cached) {
+          sendJson(res, 409, { error: 'assemble_failed' });
           return;
         }
         const backupPath = `database/dbbackup-${(Date.now() / 100).toFixed()}.bin`;
@@ -1095,7 +1185,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // --- database.bin read → 플러그인 주입 + usePlainFetch 감지 ---
+  // --- database.bin read → 스트리밍 파싱 + 플러그인 주입 ---
   if (sync.isDbRead(req)) {
     const proxyReq = http.request(
       {
@@ -1103,52 +1193,22 @@ const server = http.createServer((req, res) => {
         port: config.UPSTREAM.port,
         path: req.url,
         method: req.method,
-        headers: { ...req.headers, host: config.UPSTREAM.host },
+        headers: { ...req.headers, host: config.UPSTREAM.host, 'accept-encoding': 'identity' },
       },
       (proxyRes) => {
-        const chunks: Buffer[] = [];
-        proxyRes.on('data', (chunk: Buffer) => {
-          chunks.push(chunk);
-        });
-        proxyRes.on('end', () => {
-          const originalBuf = Buffer.concat(chunks);
-          let responseBuf = originalBuf;
+        const status = proxyRes.statusCode ?? 0;
+        if (status < 200 || status >= 300) {
+          res.writeHead(status, proxyRes.headers);
+          proxyRes.pipe(res);
+          return;
+        }
 
-          if (proxyRes.statusCode! >= 200 && proxyRes.statusCode! < 300) {
-            // delta-write 캐시: 클라이언트 최초 read 시 채움
-            setCachedDbBinary(originalBuf);
-
-            try {
-              const parsed = parseRisuSaveBlocks(originalBuf);
-              if (parsed) {
-                const rootBlock = parsed.blocks.get('root');
-                if (rootBlock) {
-                  const root: Record<string, unknown> = JSON.parse(rootBlock.json);
-                  if (root.usePlainFetch === true) {
-                    broadcastPlainFetchWarning();
-                  }
-
-                  // Phase 1: ROOT.modules 중복 제거 (MODULES 블록에 동일 데이터 존재)
-                  const strippedJson = stripHeavyFields(rootBlock.json);
-
-                  // Phase 2: sync 플러그인 주입
-                  const finalJson = injectSyncPlugin(strippedJson);
-
-                  // Phase 3: 바이너리 재조립 (변경이 있을 때만)
-                  if (finalJson !== rootBlock.json) {
-                    const reassembled = reassembleRisuSave(originalBuf, finalJson);
-                    if (reassembled) responseBuf = reassembled;
-                  }
-                }
-              }
-            } catch { /* fallback: 원본 전송 */ }
+        streamDbBinaryRead(proxyRes, res).catch((err) => {
+          logger.error('Streaming db read failed', { error: String(err) });
+          if (!res.headersSent) {
+            res.writeHead(502, { 'content-type': 'text/plain' });
           }
-
-          const headers = { ...proxyRes.headers };
-          headers['content-length'] = String(responseBuf.length);
-          delete headers['transfer-encoding'];
-          res.writeHead(proxyRes.statusCode!, headers);
-          res.end(responseBuf);
+          if (!res.writableEnded) res.end('Internal Server Error');
         });
       },
     );
@@ -1222,15 +1282,36 @@ server.listen(config.PORT, () => {
         headers: {
           [config.FILE_PATH_HEADER]: hexPath,
           [config.RISU_AUTH_HEADER]: token,
+          'accept-encoding': 'identity',
         },
       });
 
-      if (resp.ok) {
-        const body = Buffer.from(await resp.arrayBuffer());
-        if (body.length > 0) {
-          setCachedDbBinary(body);
-          sync.processDbWrite(body, null);
-          logger.info('Proactive database.bin fetch completed', { bodyKB: String((body.length / 1024).toFixed(0)) });
+      if (resp.ok && resp.body) {
+        const remoteBlocks: Buffer[] = [];
+        let blockCount = 0;
+        for await (const block of streamParseRisuSave(toAsyncIterable(resp.body))) {
+          if (block.type === BLOCK_TYPE.REMOTE) {
+            remoteBlocks.push(encodeRawBlock(block));
+            continue;
+          }
+          cache.hashCache.set(block.name, { type: block.type, hash: block.hash });
+          try {
+            cache.dataCache.set(block.name, JSON.parse(block.data.toString('utf-8')));
+          } catch {
+            cache.dataCache.set(block.name, block.data.toString('utf-8'));
+          }
+          if (block.type === BLOCK_TYPE.ROOT) {
+            try {
+              const root: Record<string, unknown> = JSON.parse(block.data.toString('utf-8'));
+              if (root.usePlainFetch === true) broadcastPlainFetchWarning();
+            } catch { /* ignore */ }
+          }
+          blockCount++;
+        }
+        if (blockCount > 0) {
+          cache.setCacheInitialized(true);
+          setCachedRemoteBlocks(remoteBlocks);
+          logger.info('Proactive database.bin fetch completed (streaming)', { blocks: String(blockCount) });
         }
       }
     } catch (e) {

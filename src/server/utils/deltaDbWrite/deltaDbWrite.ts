@@ -6,15 +6,42 @@ import * as cache from '../../cache';
 import { sendUpstreamWithRetry } from '../sendUpstreamWithRetry';
 import { assembleDbBinary } from './utils/assembleDbBinary';
 
-/** 마지막 database.bin raw body — REMOTE 블록 추출용 */
-let cachedDbBinary: Buffer | null = null;
+const MAGIC = Buffer.from('RISUSAVE\0', 'utf-8');
 
-export function getCachedDbBinary(): Buffer | null {
-  return cachedDbBinary;
+/** database.bin 내 REMOTE 블록(type 6) raw bytes 캐시 — full binary 대신 수 KB */
+let cachedRemoteBlocks: Buffer[] = [];
+
+export function getCachedRemoteBlocks(): readonly Buffer[] {
+  return cachedRemoteBlocks;
 }
 
-export function setCachedDbBinary(body: Buffer): void {
-  cachedDbBinary = body;
+/** 스트리밍 파싱에서 수집한 REMOTE 블록을 직접 설정 */
+export function setCachedRemoteBlocks(blocks: Buffer[]): void {
+  cachedRemoteBlocks = blocks;
+}
+
+/** full binary에서 REMOTE 블록을 추출하여 캐시 (독립 복사본 생성) */
+export function updateRemoteBlocksFromBinary(binary: Buffer): void {
+  const remotes: Buffer[] = [];
+  let offset = MAGIC.length;
+  while (offset + 7 <= binary.length) {
+    const blockStart = offset;
+    const type = binary[offset];
+    offset += 2;
+    const nameLen = binary[offset];
+    offset += 1;
+    if (offset + nameLen + 4 > binary.length) break;
+    offset += nameLen;
+    const dataLen = binary.readUInt32LE(offset);
+    offset += 4;
+    if (offset + dataLen > binary.length) break;
+    offset += dataLen;
+    if (type === 6) {
+      // subarray가 아닌 복사본 → 원본 binary GC 가능
+      remotes.push(Buffer.from(binary.subarray(blockStart, offset)));
+    }
+  }
+  cachedRemoteBlocks = remotes;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -208,7 +235,7 @@ function sendDbBinaryUpstream(
   processDbWrite: (buffer: Buffer, senderClientId: string | null) => void,
   notifyWriteFailed: (clientId: string | null, url: string, attempts: number) => void,
 ): void {
-  const fullBody = assembleDbBinary(cache, cachedDbBinary);
+  const fullBody = assembleDbBinary(cache, cachedRemoteBlocks);
   if (!fullBody) {
     res.writeHead(500, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: 'assemble_failed' }));
@@ -220,8 +247,6 @@ function sendDbBinaryUpstream(
     deltaKB: String((rawBody.length / 1024).toFixed(1)),
     fullKB: String((fullBody.length / 1024).toFixed(1)),
   });
-
-  cachedDbBinary = fullBody;
 
   const headers = buildUpstreamHeaders(req, config.DB_PATH, fullBody.length);
 
@@ -264,13 +289,12 @@ function sendMixedUpstream(
   // DB blocks
   let dbBinary: Buffer | null = null;
   if (dbBlockNames.length > 0) {
-    dbBinary = assembleDbBinary(cache, cachedDbBinary);
+    dbBinary = assembleDbBinary(cache, cachedRemoteBlocks);
     if (!dbBinary) {
       res.writeHead(500, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: 'assemble_failed' }));
       return;
     }
-    cachedDbBinary = dbBinary;
 
     const body = dbBinary;
     const headers = buildUpstreamHeaders(req, config.DB_PATH, body.length);
