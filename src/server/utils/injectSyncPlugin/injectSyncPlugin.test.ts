@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { injectSyncPlugin } from './injectSyncPlugin';
 import { SYNC_PLUGIN_NAME, SYNC_PLUGIN_NAME_LEGACY, SYNC_MARKER_KEY, PROXY_URLS_ARG_KEY } from '../../../shared/syncMarker';
+import { REREGISTER_DELAY_MS } from './pluginScript';
 
 describe('injectSyncPlugin', () => {
   it('빈 plugins 배열에 플러그인을 주입한다', () => {
@@ -18,6 +19,15 @@ describe('injectSyncPlugin', () => {
     const result = JSON.parse(injectSyncPlugin(root));
 
     expect(result.plugins[0].script).toContain(SYNC_MARKER_KEY);
+  });
+
+  it('플러그인 스크립트에 지연 재등록 로직이 포함된다', () => {
+    const root = JSON.stringify({ plugins: [] });
+    const result = JSON.parse(injectSyncPlugin(root));
+    const script: string = result.plugins[0].script;
+
+    expect(script).toContain('unregisterBodyIntercepter');
+    expect(script).toContain(String(REREGISTER_DELAY_MS));
   });
 
   it('다른 플러그인이 있을 때 추가한다', () => {
