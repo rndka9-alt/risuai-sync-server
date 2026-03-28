@@ -5,6 +5,7 @@ import { reloadOnEpochMismatch } from '../epochReload';
 import { sendCaughtUp } from './sendCaughtUp';
 import { handleBlocksChanged } from './handleBlocksChanged';
 import { processPendingStreams } from './processPendingStreams';
+import { serverLog } from '../serverLog';
 
 /** Catch-up: 놓친 변경분 복구 */
 export function catchUpFromServer(): void {
@@ -69,5 +70,5 @@ export function catchUpFromServer(): void {
 
       sendCaughtUp();
     })
-    .catch(() => {});
+    .catch((e) => { serverLog('warn', 'catchUpFromServer failed', { error: String(e) }); });
 }

@@ -5,6 +5,7 @@ import { showNotification, showWriteFailedNotification, showPlainFetchWarning } 
 import { reloadOnEpochMismatch } from './epochReload';
 import type { ServerMessage, ChangesResponse } from '../shared/types';
 import { getToken, waitForToken } from './auth';
+import { serverLog } from './serverLog';
 
 /** WebSocket 연결 */
 export async function connect(): Promise<void> {
@@ -77,7 +78,7 @@ export async function connect(): Promise<void> {
 
               sendCaughtUp();
             })
-            .catch(() => {});
+            .catch((e) => { serverLog('warn', 'first-connect catch-up failed', { error: String(e) }); });
           state.isFirstConnect = false;
           return;
         }

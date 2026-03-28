@@ -22,5 +22,5 @@ export function serverLog(
     headers,
     body,
     keepalive: true,
-  }).catch(() => {});
+  }).catch((e) => { console.warn('[sync] serverLog send failed', e); });
 }

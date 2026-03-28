@@ -12,6 +12,7 @@ import { getProxyUrls } from './utils/getProxyUrls';
 import { showSyncFallbackNotice } from '../notification/showSyncFallbackNotice';
 import { computeDelta, computeRemoteDelta, warmCache, warmRemoteCache } from '../deltaDb';
 import { enqueueBatchWrite } from './utils/batchWriteBuffer';
+import { serverLog } from '../serverLog';
 
 /** hex-encoded "database/database.bin" */
 const DB_BIN_HEX = Array.from(new TextEncoder().encode('database/database.bin'))
@@ -206,7 +207,7 @@ const patchedFetch: typeof fetch = function (input, init) {
           const cloned = resp.clone();
           cloned.arrayBuffer().then((buf) => {
             warmCache(new Uint8Array(buf));
-          }).catch(() => {});
+          }).catch((e) => { serverLog('warn', 'db cache warm failed', { error: String(e) }); });
         }
         return resp;
       });
@@ -219,7 +220,7 @@ const patchedFetch: typeof fetch = function (input, init) {
           const cloned = resp.clone();
           cloned.arrayBuffer().then((buf) => {
             warmRemoteCache(charId, new Uint8Array(buf));
-          }).catch(() => {});
+          }).catch((e) => { serverLog('warn', 'remote cache warm failed', { error: String(e) }); });
         }
         return resp;
       });

@@ -1,5 +1,6 @@
 import { syncFetch } from '../config';
 import { state } from '../state';
+import { serverLog } from '../serverLog';
 
 /** reconnect 시 서버의 활성 스트림 목록으로 activeStreams 복원 (중복 요청 차단용) */
 export function restoreActiveStreams(): void {
@@ -20,5 +21,5 @@ export function restoreActiveStreams(): void {
         });
       }
     })
-    .catch(() => {});
+    .catch((e) => { serverLog('warn', 'restoreActiveStreams failed', { error: String(e) }); });
 }
