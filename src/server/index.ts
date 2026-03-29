@@ -10,6 +10,7 @@ import { buildClientJs, clientBundleHash } from './client-bundle';
 import type { ClientMessage, HealthResponse } from '../shared/types';
 import * as logger from './logger';
 import { decodeProxy2Headers, forwardToLlm, isPrivateHost } from './utils/llmProxy';
+import { looksLikeLlmRequest } from './utils/llmProxy/looksLikeLlmRequest';
 import * as streamBuffer from './stream-buffer';
 import { clients, aliveState, freshClients } from './serverState';
 import { isTrustedClient } from './utils/isTrustedClient';
@@ -328,8 +329,8 @@ function proxyProxy2(req: http.IncomingMessage, res: http.ServerResponse): void 
       } catch { /* JSON 파싱 실패 시 원본 유지 */ }
     }
 
-    // LLM 요청 판별: 플러그인이 주입한 sync marker 존재 시에만 모니터링
-    const shouldMonitor = hadSyncMarker;
+    // LLM 요청 판별: sync marker 또는 body 구조 기반 heuristic
+    const shouldMonitor = hadSyncMarker || looksLikeLlmRequest(bodyStr);
     const emitMonitorEvent: typeof pushLlmEvent = shouldMonitor ? pushLlmEvent : () => {};
 
     const llmTargetUrl = decoded ? decoded.targetUrl.href : '';
