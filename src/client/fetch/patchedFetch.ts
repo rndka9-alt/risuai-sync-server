@@ -19,8 +19,8 @@ const DB_BIN_HEX = Array.from(new TextEncoder().encode('database/database.bin'))
   .map((b) => b.toString(16).padStart(2, '0'))
   .join('');
 
-/** 백업 디바운스: 마지막 요청 후 1시간 뒤 한 번만 실제 전송 */
-const BACKUP_DEBOUNCE_MS = 60 * 60 * 1000;
+/** 백업 디바운스: 마지막 요청 후 10분 뒤 한 번만 실제 전송 */
+const BACKUP_DEBOUNCE_MS = 10 * 60 * 1000;
 let backupTimer: ReturnType<typeof setTimeout> | null = null;
 let latestBackupAuth: string = '';
 
