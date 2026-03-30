@@ -30,6 +30,9 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
     // 첫 write: 캐시만 채움, broadcast 없음
     for (const [name, block] of blocks) {
       cache.hashCache.set(name, { type: block.type, hash: block.hash });
+      // REMOTE 블록은 포인터 메타데이터({v,type,name})만 담고 있으므로
+      // dataCache에 넣으면 실제 캐릭터 데이터를 오염시킴
+      if (block.type === BLOCK_TYPE.REMOTE) continue;
       try {
         cache.dataCache.set(name, JSON.parse(block.json));
       } catch {
@@ -127,11 +130,15 @@ export function processDbWrite(buffer: Buffer, senderClientId: string | null): v
     }
     // 캐시는 항상 업데이트 (IGNORED-only 변경도 포함)
     cache.hashCache.set(name, { type: block.type, hash: block.hash });
-    let parsed: unknown;
-    try { parsed = JSON.parse(block.json); } catch { parsed = block.json; }
-    cache.dataCache.set(name, parsed);
-    if (block.type === BLOCK_TYPE.ROOT && senderClientId) {
-      clientRootCache.set(senderClientId, parsed);
+    // REMOTE 블록은 포인터 메타데이터({v,type,name})만 담고 있으므로
+    // dataCache에 넣으면 실제 캐릭터 데이터를 오염시킴
+    if (block.type !== BLOCK_TYPE.REMOTE) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(block.json); } catch { parsed = block.json; }
+      cache.dataCache.set(name, parsed);
+      if (block.type === BLOCK_TYPE.ROOT && senderClientId) {
+        clientRootCache.set(senderClientId, parsed);
+      }
     }
   }
 
