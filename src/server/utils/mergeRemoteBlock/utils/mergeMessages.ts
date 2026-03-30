@@ -65,7 +65,7 @@ export function mergeMessages(
   const withoutTime: MergeMessage[] = [];
 
   for (const msg of newMessages) {
-    if (msg.time && msg.time > 0) {
+    if (msg.time != null && msg.time > 0) {
       withTime.push(msg);
     } else {
       withoutTime.push(msg);
@@ -76,7 +76,7 @@ export function mergeMessages(
   for (const msg of withTime) {
     let insertIdx = result.length;
     for (let i = 0; i < result.length; i++) {
-      if (result[i].time && result[i].time! > msg.time!) {
+      if (result[i].time != null && result[i].time! > msg.time!) {
         insertIdx = i;
         break;
       }
